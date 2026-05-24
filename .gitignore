@@ -40,6 +40,10 @@ nbdist/
 *.log
 *.xml.versionsBackup
 
+# Local dev files
+.sdkmanrc
+README_for_ai.md
+
 !*/build/*.java
 !*/build/*.html
 !*/build/*.xml
