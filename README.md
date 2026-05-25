@@ -3,6 +3,7 @@
 将 Spring Boot Controller 的 REST API 端点同步到 [Hoppscotch Self-Hosted](https://github.com/hoppscotch/hoppscotch) 实例的 IntelliJ IDEA 插件。
 
 > ⚠️ 仅支持 Spring Boot (Java) 项目。
+> 此文及项目由ai生成，本项目只自用，出于分享目的开源。并不考虑持久维护（能力和精力有限），更多的是希望现阶段可以给那些能力和精力更有限的朋友提供个能用的选择。
 
 ## 功能
 
