@@ -55,7 +55,64 @@ data class RequestInfo(
     val id: String,
     val title: String,
     val request: String = ""
-)
+) {
+    companion object {
+        private val reqGson = com.google.gson.GsonBuilder().create()
+    }
+
+    /**
+     * 从 [request] JSON 中提取 HTTP method。
+     * 用于与方法+endpoint 匹配，不依赖 title。
+     */
+    val methodFromBody: String?
+        get() = try {
+            reqGson.fromJson(request, Map::class.java)?.get("method")?.toString()
+        } catch (_: Exception) { null }
+
+    /**
+     * 从 [request] JSON 中提取 endpoint（= fullPath）。
+     * 用于与方法+endpoint 匹配，不依赖 title。
+     */
+    val endpointFromBody: String?
+        get() = try {
+            reqGson.fromJson(request, Map::class.java)?.get("endpoint")?.toString()
+        } catch (_: Exception) { null }
+
+    /**
+     * 从 [request] JSON 中提取 method:endpoint 组合键，用于增量匹配。
+     * 格式： "GET:/api/users/{id}"
+     */
+    val methodEndpointKey: String?
+        get() {
+            val m = methodFromBody ?: return null
+            val e = endpointFromBody ?: return null
+            return "$m:$e"
+        }
+}
+
+/**
+ * 同步持久化数据：存储 serverId + localHash + srvHash。
+ */
+data class SyncPersistData(
+    val serverId: String? = null,
+    val localHash: Int = 0,
+    val srvHash: Int = 0
+) {
+    companion object {
+        /**
+         * 从持久化字符串解析。
+         * 兼容 "serverId,localHash,srvHash"、"localHash,srvHash"、"localHash" 三种格式。
+         */
+        fun parse(value: String): SyncPersistData {
+            val hasSrvId = value.count { it == ',' } >= 2
+            val srvId = if (hasSrvId) value.substringBefore(",").takeIf { it.isNotEmpty() } else null
+            val rest = if (hasSrvId) value.substringAfter(",") else value
+            val localHash = rest.substringBefore(",").toIntOrNull() ?: 0
+            val srvHash = rest.substringAfter(",", "0").toIntOrNull() ?: 0
+            return SyncPersistData(srvId, localHash, srvHash)
+        }
+    }
+}
 
 /**
  * 端点同步状态
@@ -81,7 +138,9 @@ data class SyncResult(
     val requestsSkipped: Int = 0,
     val requestsUpdated: Int = 0,
     val requestsMerged: Int = 0,
-    val errors: List<String> = emptyList()
+    val errors: List<String> = emptyList(),
+    /** 成功同步的端点映射：endpointKey → serverId，用于后续持久化 */
+    val syncedEndpoints: Map<String, String> = emptyMap()
 ) {
     val isSuccess: Boolean get() = failed == 0
 }
@@ -144,6 +203,7 @@ fun computeEndpointHash(endpoint: SpringEndpoint): Int {
 
 /**
  * 端点在服务端的请求标题（与 SyncService.buildRequestTitle 一致）。
+ * 优先使用 @ApiOperation 的值，没有则回退为 fullPath。
  */
 fun requestTitleOnServer(endpoint: SpringEndpoint): String =
-    endpoint.fullPath
+    endpoint.description?.takeIf { it.isNotBlank() } ?: endpoint.fullPath

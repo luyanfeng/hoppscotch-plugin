@@ -43,6 +43,10 @@ class SpringControllerParser(private val project: Project) {
         private const val ANNOTATION_REQUEST_BODY = "org.springframework.web.bind.annotation.RequestBody"
         private const val ANNOTATION_REQUEST_HEADER = "org.springframework.web.bind.annotation.RequestHeader"
 
+        // Swagger / OpenAPI 注解
+        private const val ANNOTATION_API_OPERATION = "io.swagger.annotations.ApiOperation"
+        private const val ANNOTATION_OPERATION_V3 = "io.swagger.v3.oas.annotations.Operation"
+
         // JSON 骨架展示相关常量
         private val PRIMITIVE_TYPES = setOf(
             "byte", "short", "int", "long", "float", "double", "boolean", "char"
@@ -290,6 +294,7 @@ class SpringControllerParser(private val project: Project) {
      */
     private fun parseMethodEndpoints(method: PsiMethod, classLevelPath: String): List<SpringEndpoint> {
         val endpoints = mutableListOf<SpringEndpoint>()
+        val description = extractApiDescription(method)
 
         for (annotation in method.annotations) {
             val qualifiedName = annotation.qualifiedName ?: continue
@@ -314,6 +319,7 @@ class SpringControllerParser(private val project: Project) {
                         httpMethod = httpMethod,
                         path = methodPath,
                         fullPath = fullPath,
+                        description = description,
                         parameters = parameters,
                         consumes = consumes
                     )
@@ -322,6 +328,32 @@ class SpringControllerParser(private val project: Project) {
         }
 
         return endpoints
+    }
+
+    /**
+     * 从方法的注解中提取 API 描述（@ApiOperation 或 @Operation）。
+     *
+     * 支持：
+     * - [@ApiOperation("描述")] — 取 value 属性
+     * - [@Operation(summary = "描述")] — 取 summary 属性
+     *
+     * @return 找到的描述文本，未找到或无值时返回 null
+     */
+    private fun extractApiDescription(method: PsiMethod): String? {
+        for (annotation in method.annotations) {
+            val qn = annotation.qualifiedName ?: continue
+            val attrName = when (qn) {
+                ANNOTATION_API_OPERATION -> "value"
+                ANNOTATION_OPERATION_V3 -> "summary"
+                else -> continue
+            }
+            val attrValue = annotation.findAttributeValue(attrName)
+            if (attrValue != null) {
+                val text = extractStringValue(attrValue)
+                if (!text.isNullOrBlank()) return text
+            }
+        }
+        return null
     }
 
     /**

@@ -26,6 +26,13 @@ class SyncService(
     private val converter = HoppscotchDataConverter()
 
     /**
+     * 构建本地端点的匹配 key（用于与服务端请求的 methodEndpointKey 对比）。
+     * 格式： "HTTP_METHOD:fullPath"，如 "GET:/api/users/{id}"
+     */
+    private fun buildMatchKey(endpoint: SpringEndpoint): String =
+        "${endpoint.httpMethod.name}:${endpoint.fullPath}"
+
+    /**
  * 同步指定的 Controller 组（跳过解析步骤，直接同步）。
      *
      * 增量同步模式：先查 Hoppscotch 上已有的集合和请求，跳过已存在的项目。
@@ -63,6 +70,7 @@ class SyncService(
         var requestsUpdated = 0
         var requestsMerged = 0
         val errors = mutableListOf<String>()
+        val syncedEndpoints = mutableMapOf<String, String>() // endpointKey → serverId
         val totalCollections = groups.size
 
         // 1. 查询已有集合（失败时不影响后续）
@@ -117,10 +125,12 @@ class SyncService(
             }
 
             // 2b. 查询该集合中已有的请求（仅对已有集合才查询，新建集合已知为空）
+            // 使用 methodEndpointKey（method:endpoint）作为匹配 key，不依赖 title
             val existingRequestsMap: Map<String, RequestInfo> = if (existingCollection != null) {
                 client.listRequests(collectionInfo.id)
                     .getOrNull()
-                    ?.associateBy { it.title } ?: emptyMap()
+                    ?.mapNotNull { req -> req.methodEndpointKey?.let { it to req } }
+                    ?.toMap() ?: emptyMap()
             } else {
                 emptyMap()
             }
@@ -128,6 +138,7 @@ class SyncService(
             // 2c. 遍历组内端点创建请求
             for ((reqIndex, endpoint) in group.endpoints.withIndex()) {
                 val requestTitle = buildRequestTitle(endpoint)
+                val matchKey = buildMatchKey(endpoint)
                 val requestProgress = processedEndpoints.toDouble() / totalEndpoints.coerceAtLeast(1)
 
                 indicator?.let {
@@ -135,10 +146,16 @@ class SyncService(
                     it.fraction = requestProgress.coerceIn(0.0, 0.99)
                 }
 
-                if (requestTitle in existingRequestsMap.keys) {
+                if (matchKey in existingRequestsMap.keys) {
+                    val existingReq = existingRequestsMap[matchKey]!!
                     when (strategy) {
                         SyncStrategy.SERVER_FIRST -> {
                             requestsSkipped++
+                            // 保留已有 serverId（跳过的端点在后续状态检测中会通过回填补上）
+                            val ek = computeEndpointKey(endpoint, group)
+                            if (existingReq.id.isNotBlank()) {
+                                syncedEndpoints[ek] = existingReq.id
+                            }
                             processedEndpoints++
                             continue
                         }
@@ -153,12 +170,14 @@ class SyncService(
                             }
 
                             val updateResult = client.updateRequest(
-                                existingRequestsMap[requestTitle]!!.id,
+                                existingReq.id,
                                 requestTitle,
                                 requestJson
                             )
                             if (updateResult.isSuccess) {
                                 requestsUpdated++
+                                val ek = computeEndpointKey(endpoint, group)
+                                syncedEndpoints[ek] = existingReq.id
                             } else {
                                 errors.add("请求 [$requestTitle] 更新失败: ${updateResult.exceptionOrNull()?.message}")
                             }
@@ -177,17 +196,19 @@ class SyncService(
 
                             val serverFirst = strategy == SyncStrategy.MERGE_SERVER_FIRST
                             val mergedJson = mergeRequestJsons(
-                                existingRequestsMap[requestTitle]!!.request,
+                                existingReq.request,
                                 newRequestJson,
                                 serverFirst
                             )
                             val updateResult = client.updateRequest(
-                                existingRequestsMap[requestTitle]!!.id,
+                                existingReq.id,
                                 requestTitle,
                                 mergedJson
                             )
                             if (updateResult.isSuccess) {
                                 requestsMerged++
+                                val ek = computeEndpointKey(endpoint, group)
+                                syncedEndpoints[ek] = existingReq.id
                             } else {
                                 errors.add("请求 [$requestTitle] 合并更新失败: ${updateResult.exceptionOrNull()?.message}")
                             }
@@ -211,6 +232,9 @@ class SyncService(
                 val requestResult = client.createRequest(collectionInfo.id, requestTitle, requestJson)
                 if (requestResult.isSuccess) {
                     requestsCreated++
+                    val ek = computeEndpointKey(endpoint, group)
+                    val serverId = requestResult.getOrThrow().id
+                    syncedEndpoints[ek] = serverId
                 } else {
                     errors.add("请求 [$requestTitle] 创建失败: ${requestResult.exceptionOrNull()?.message}")
                 }
@@ -239,7 +263,8 @@ class SyncService(
             requestsSkipped = requestsSkipped,
             requestsUpdated = requestsUpdated,
             requestsMerged = requestsMerged,
-            errors = errors
+            errors = errors,
+            syncedEndpoints = syncedEndpoints
         )
     }
 
@@ -264,9 +289,10 @@ class SyncService(
 
     /**
      * 根据 [SpringEndpoint] 构建请求标题。
+     * 优先使用 @ApiOperation 的值，没有则回退为 fullPath。
      */
     private fun buildRequestTitle(endpoint: SpringEndpoint): String {
-        return endpoint.fullPath
+        return endpoint.description?.takeIf { it.isNotBlank() } ?: endpoint.fullPath
     }
 
     /**
@@ -336,37 +362,43 @@ class SyncService(
         var requestsUpdated = 0
         var requestsMerged = 0
         val errors = mutableListOf<String>()
+        val syncedEndpoints = mutableMapOf<String, String>() // endpointKey → serverId
 
-        // 查询目标集合中已有的请求
+        // 查询目标集合中已有的请求（使用 methodEndpointKey 匹配）
         val existingRequestsMap: MutableMap<String, RequestInfo> = client.listRequests(targetCollectionId)
             .getOrNull()
-            ?.associateBy { it.title }
-            ?.toMutableMap() ?: mutableMapOf()
+            ?.mapNotNull { req -> req.methodEndpointKey?.let { it to req } }
+            ?.toMap()?.toMutableMap() ?: mutableMapOf()
 
         indicator?.let {
             it.text = "准备同步 $totalEndpoints 个端点到目标集合"
             it.fraction = 0.0
         }
 
-        // 将所有分组展开为 (title, endpoint) 列表
+        // 将所有分组展开为 (endpoint, group) 列表
         val allEntries = groups.flatMap { group ->
-            group.endpoints.map { endpoint ->
-                buildRequestTitle(endpoint) to endpoint
-            }
+            group.endpoints.map { endpoint -> endpoint to group }
         }
 
         for ((reqIndex, entry) in allEntries.withIndex()) {
-            val requestTitle = entry.first
-            val endpoint = entry.second
+            val endpoint = entry.first
+            val group = entry.second
+            val requestTitle = buildRequestTitle(endpoint)
+            val matchKey = buildMatchKey(endpoint)
             indicator?.let {
                 it.text = "[${reqIndex + 1}/${totalEndpoints}] 处理请求: $requestTitle"
                 it.fraction = processedEndpoints.toDouble() / totalEndpoints.coerceAtLeast(1)
             }
 
-            if (requestTitle in existingRequestsMap) {
+            if (matchKey in existingRequestsMap) {
+                val existingReq = existingRequestsMap[matchKey]!!
                 when (strategy) {
                     SyncStrategy.SERVER_FIRST -> {
                         requestsSkipped++
+                        val ek = computeEndpointKey(endpoint, group)
+                        if (existingReq.id.isNotBlank()) {
+                            syncedEndpoints[ek] = existingReq.id
+                        }
                         processedEndpoints++
                         continue
                     }
@@ -380,12 +412,14 @@ class SyncService(
                             continue
                         }
                         val updateResult = client.updateRequest(
-                            existingRequestsMap[requestTitle]!!.id,
+                            existingReq.id,
                             requestTitle,
                             requestJson
                         )
                         if (updateResult.isSuccess) {
                             requestsUpdated++
+                            val ek = computeEndpointKey(endpoint, group)
+                            syncedEndpoints[ek] = existingReq.id
                         } else {
                             errors.add("请求 [$requestTitle] 更新失败: ${updateResult.exceptionOrNull()?.message}")
                         }
@@ -403,17 +437,19 @@ class SyncService(
                         }
                         val serverFirst = strategy == SyncStrategy.MERGE_SERVER_FIRST
                         val mergedJson = mergeRequestJsons(
-                            existingRequestsMap[requestTitle]!!.request,
+                            existingReq.request,
                             newRequestJson,
                             serverFirst
                         )
                         val updateResult = client.updateRequest(
-                            existingRequestsMap[requestTitle]!!.id,
+                            existingReq.id,
                             requestTitle,
                             mergedJson
                         )
                         if (updateResult.isSuccess) {
                             requestsMerged++
+                            val ek = computeEndpointKey(endpoint, group)
+                            syncedEndpoints[ek] = existingReq.id
                         } else {
                             errors.add("请求 [$requestTitle] 合并更新失败: ${updateResult.exceptionOrNull()?.message}")
                         }
@@ -437,6 +473,8 @@ class SyncService(
             val requestResult = client.createRequest(targetCollectionId, requestTitle, requestJson)
             if (requestResult.isSuccess) {
                 requestsCreated++
+                val ek = computeEndpointKey(endpoint, group)
+                syncedEndpoints[ek] = requestResult.getOrThrow().id
             } else {
                 errors.add("请求 [$requestTitle] 创建失败: ${requestResult.exceptionOrNull()?.message}")
             }
@@ -462,7 +500,8 @@ class SyncService(
             requestsSkipped = requestsSkipped,
             requestsUpdated = requestsUpdated,
             requestsMerged = requestsMerged,
-            errors = errors
+            errors = errors,
+            syncedEndpoints = syncedEndpoints
         )
     }
 }

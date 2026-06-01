@@ -39,6 +39,7 @@ data class SpringEndpoint(
     val httpMethod: HttpMethod,
     val path: String,
     val fullPath: String,
+    val description: String? = null,
     val parameters: List<EndpointParameter> = emptyList(),
     val consumes: List<String> = emptyList()
 )

@@ -18,11 +18,12 @@ import com.hoppscotch.sync.model.ControllerGroup
 import com.hoppscotch.sync.model.EndpointParameter
 import com.hoppscotch.sync.model.ParamSource
 import com.hoppscotch.sync.model.SpringEndpoint
+import com.hoppscotch.sync.model.RequestInfo
+import com.hoppscotch.sync.model.SyncPersistData
 import com.hoppscotch.sync.model.SyncResult
 import com.hoppscotch.sync.model.SyncStatus
 import com.hoppscotch.sync.model.computeEndpointHash
 import com.hoppscotch.sync.model.computeEndpointKey
-import com.hoppscotch.sync.model.requestTitleOnServer
 import com.hoppscotch.sync.psi.SpringControllerParser
 import com.hoppscotch.sync.service.SyncService
 import com.hoppscotch.sync.settings.AppSettings
@@ -84,11 +85,12 @@ class HoppscotchSyncPanel(private val project: Project) {
 
     /** 列索引 → (列名 i18n key, 默认宽度) */
     private val columnDefaults = mapOf(
-        2 to ("table.column.path" to ColumnWidth(0, 300)),
-        3 to ("table.column.controller" to ColumnWidth(0, 180)),
-        4 to ("table.column.method" to ColumnWidth(110, 150, 150)),  // 固定宽度，需容纳中英文表头和 GET/POST/DELETE
-        5 to ("table.column.parameters" to ColumnWidth(0, 200)),
-        6 to ("table.column.project" to ColumnWidth(0, 120))
+        2 to ("table.column.title" to ColumnWidth(0, 200)),
+        3 to ("table.column.path" to ColumnWidth(0, 300)),
+        4 to ("table.column.controller" to ColumnWidth(0, 180)),
+        5 to ("table.column.method" to ColumnWidth(110, 150, 150)),  // 固定宽度，需容纳中英文表头和 GET/POST/DELETE
+        6 to ("table.column.parameters" to ColumnWidth(0, 200)),
+        7 to ("table.column.project" to ColumnWidth(0, 120))
     )
 
     /** 复制当前选中单元格的文本内容到系统剪贴板 */
@@ -119,10 +121,11 @@ class HoppscotchSyncPanel(private val project: Project) {
         selectedProjects = if (cachedProjects.isEmpty()) allProjects.toSet()
             else cachedProjects.filter { it in allProjects }.toSet().ifEmpty { allProjects.toSet() }
 
-        // ── Table columns: # | ☑ | Path | Controller | Method | Parameters | Project ──
+        // ── Table columns: # | ☑ | Title | Path | Controller | Method | Parameters | Project ──
         val columns = arrayOf(
             I18n.message("table.column.index"),
             I18n.message("table.column.checkbox"),
+            I18n.message("table.column.title"),
             I18n.message("table.column.path"),
             I18n.message("table.column.controller"),
             I18n.message("table.column.method"),
@@ -194,6 +197,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                 minWidth = 50; preferredWidth = 80; maxWidth = 130
             } } catch (_: Exception) {}
             for (colModel in listOf(
+                I18n.message("table.column.title") to 200,
                 I18n.message("table.column.path") to 300,
                 I18n.message("table.column.controller") to 180,
                 I18n.message("table.column.method") to 80,
@@ -894,7 +898,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                     showSyncResult(syncResult)
                     updateStatusAfterSync(syncResult)
 
-                    // ── 同步后记录 hash（本地 + 服务端请求）并更新行状态 ──
+                    // ── 同步后记录 hash + serverId（本地 + 服务端请求）并更新行状态 ──
                     val converter = HoppscotchDataConverter()
                     val syncMap = AppSettings.getInstance().getSyncStatusMap().toMutableMap()
                     for (group in filteredGroups) {
@@ -904,7 +908,13 @@ class HoppscotchSyncPanel(private val project: Project) {
                             val srvHash = HoppscotchDataConverter.computeServerRequestHash(
                                 converter.toHoppscotchRequest(endpoint)
                             )
-                            syncMap[key] = HoppscotchDataConverter.buildSyncValue(localHash, srvHash)
+                            // 优先使用 syncGroups 返回的 serverId（新格式），否则用旧格式
+                            val serverId = syncResult.syncedEndpoints[key]
+                            syncMap[key] = if (serverId != null) {
+                                HoppscotchDataConverter.buildSyncValue(serverId, localHash, srvHash)
+                            } else {
+                                HoppscotchDataConverter.buildSyncValue(localHash, srvHash)
+                            }
                         }
                     }
                     AppSettings.getInstance().setSyncStatusMap(syncMap)
@@ -1093,9 +1103,25 @@ class HoppscotchSyncPanel(private val project: Project) {
 
         // 搜索所有集合层次（root + target 子集合），确保覆盖同步时选择的不同位置
         // 同时收集请求 JSON 用于服务端修改检测
-        val allServerTitles = mutableSetOf<String>()
-        val requestByTitle = mutableMapOf<String, String>() // title → request JSON
+        // 使用 serverId 匹配优先，不依赖 title
+        val allServerIds = mutableSetOf<String>()
+        val requestById = mutableMapOf<String, RequestInfo>() // id → RequestInfo
+        // method:endpoint → id 映射，用于旧数据回填（无 serverId 时）
+        val methodEndpointToInfo = mutableMapOf<String, RequestInfo>()
         val targetId = settings.targetCollectionId.ifBlank { null }
+
+        fun collectRequests(infos: List<RequestInfo>) {
+            for (info in infos) {
+                if (info.id.isNotBlank()) {
+                    allServerIds.add(info.id)
+                    requestById[info.id] = info
+                }
+                val meKey = info.methodEndpointKey
+                if (meKey != null) {
+                    methodEndpointToInfo.putIfAbsent(meKey, info)
+                }
+            }
+        }
 
         // 1. 先搜索 target 子集合（如果有设置）
         if (targetId != null) {
@@ -1105,8 +1131,7 @@ class HoppscotchSyncPanel(private val project: Project) {
             )
             if (targetResult.isSuccess) {
                 val infos = targetResult.getOrThrow()
-                allServerTitles.addAll(infos.map { it.title })
-                infos.forEach { if (it.request.isNotBlank()) requestByTitle[it.title] = it.request }
+                collectRequests(infos)
                 LogUtil.info(log) { "target 模式 [${settings.targetCollectionPath}] 找到 ${infos.size} 个请求（含 ${infos.count { it.request.isNotBlank() }} 个含请求体）" }
             } else {
                 log.warn("target 模式查询失败: ${targetResult.exceptionOrNull()?.message}")
@@ -1120,20 +1145,22 @@ class HoppscotchSyncPanel(private val project: Project) {
         )
         if (rootResult.isSuccess) {
             val infos = rootResult.getOrThrow()
-            val beforeSize = allServerTitles.size
-            allServerTitles.addAll(infos.map { it.title })
-            infos.forEach { if (it.request.isNotBlank()) requestByTitle.putIfAbsent(it.title, it.request) }
-            LogUtil.info(log) { "根集合搜索找到 ${infos.size} 个请求（其中 ${allServerTitles.size - beforeSize} 个新标题，${infos.count { it.request.isNotBlank() }} 个含请求体）" }
+            val beforeSize = allServerIds.size
+            collectRequests(infos)
+            LogUtil.info(log) { "根集合搜索找到 ${infos.size} 个请求（其中 ${allServerIds.size - beforeSize} 个新 id，${infos.count { it.request.isNotBlank() }} 个含请求体）" }
         } else {
             log.warn("根集合查询失败: ${rootResult.exceptionOrNull()?.message}")
         }
 
-        if (allServerTitles.isEmpty()) {
+        if (allServerIds.isEmpty()) {
             LogUtil.info(log) { "在所有位置均未找到匹配的请求数据，所有端点将标记为 UNSYNCED" }
         }
 
         // 获取持久化 hash 映射
         val persistedMap = settings.getSyncStatusMap()
+        // 准备持久化更新（回填 serverId 等）
+        val updatedMap = persistedMap.toMutableMap()
+        var hasPendingUpdates = false
 
         // 使用扫描数据判断每行同步状态，对比本地 hash + 服务端请求 hash
         val statuses = MutableList(freshEndpoints.size) { SyncStatus.UNSYNCED }
@@ -1148,35 +1175,60 @@ class HoppscotchSyncPanel(private val project: Project) {
 
             val key = computeEndpointKey(endpoint, group)
             val currentLocalHash = computeEndpointHash(endpoint)
-            val storedValue = persistedMap[key] // 格式 "localHash,srvHash" 或为 null
-            val title = requestTitleOnServer(endpoint)
+            val storedValue = persistedMap[key]
+            val matchKey = "${endpoint.httpMethod.name}:${endpoint.fullPath}"
 
-            // 解析持久化的两端 hash
-            val storedLocalHash = if (storedValue != null) HoppscotchDataConverter.parseLocalHash(storedValue) else null
-            val storedSrvHash = if (storedValue != null) HoppscotchDataConverter.parseSrvReqHash(storedValue) else 0
-            val hasPersistedData = storedValue != null // 是否曾同步过（有持久化数据）
+            // 解析持久化的数据（含 serverId）
+            val syncData = if (storedValue != null) SyncPersistData.parse(storedValue) else null
+            val storedLocalHash = syncData?.localHash
+            val storedSrvHash = syncData?.srvHash ?: 0
+            val serverId = syncData?.serverId
+            val hasPersistedData = storedValue != null
 
             LogUtil.info(log) { "--- 端点 [$i] 对比详情 ---" }
             LogUtil.info(log) { "  端点 Key: $key" }
-            LogUtil.info(log) { "  本地标题: $title" }
-            LogUtil.info(log) { "  本地 Path: ${endpoint.path}" }
             LogUtil.info(log) { "  本地 FullPath: ${endpoint.fullPath}" }
             LogUtil.info(log) { "  本地 HTTP Method: ${endpoint.httpMethod.name}" }
             LogUtil.info(log) { "  本地参数: ${endpoint.parameters.map { "${it.source.name}:${it.name}(${it.type})" }.joinToString(", ")}" }
             LogUtil.info(log) { "  本地当前 Hash: $currentLocalHash" }
-            LogUtil.info(log) { "  持久化（本地:服务端）: ${storedValue ?: "无"}" }
+            LogUtil.info(log) { "  持久化: ${storedValue ?: "无"}" }
+            LogUtil.info(log) { "  持久化 serverId: ${serverId ?: "无"}" }
 
-            val titleOnServer = title in allServerTitles
-            LogUtil.info(log) { "  服务端是否存在标题: $titleOnServer" }
+            // ── 确定服务端请求是否存在 ──
+            val serverReqInfo: RequestInfo? = if (serverId != null && serverId in allServerIds) {
+                // 有 serverId 且服务端存在 → 直接取
+                requestById[serverId]
+            } else if (serverId != null && serverId !in allServerIds) {
+                // 有 serverId 但服务端找不到（可能被手动删除）→ 尝试 method:endpoint 匹配
+                methodEndpointToInfo[matchKey]
+            } else {
+                // 无 serverId（旧数据）→ 尝试 method:endpoint 匹配（回填）
+                methodEndpointToInfo[matchKey]
+            }
 
-            statuses[i] = if (titleOnServer) {
+            val foundOnServer = serverReqInfo != null
+
+            // ── 回填 serverId（仅当无 serverId 但匹配到了）──
+            if (serverId == null && serverReqInfo != null) {
+                val oldLocalHash = syncData?.localHash ?: currentLocalHash
+                val oldSrvHash = syncData?.srvHash ?: 0
+                updatedMap[key] = HoppscotchDataConverter.buildSyncValue(
+                    serverReqInfo.id, oldLocalHash, oldSrvHash
+                )
+                LogUtil.info(log) { "  ↑ 已回填 serverId: ${serverReqInfo.id}" }
+                hasPendingUpdates = true
+            }
+
+            LogUtil.info(log) { "  服务端是否存在: $foundOnServer" }
+
+            statuses[i] = if (foundOnServer) {
                 val localChanged = hasPersistedData && currentLocalHash != storedLocalHash
                 var serverChanged = false
 
-                // 仅在本地未变化时检查服务端请求 hash（本地变化已足够判定 MODIFIED）
+                // 仅在本地未变化时检查服务端请求 hash
                 if (!localChanged && hasPersistedData && storedSrvHash != 0) {
-                    val serverReqJson = requestByTitle[title]
-                    if (serverReqJson != null) {
+                    val serverReqJson = serverReqInfo.request
+                    if (serverReqJson.isNotBlank()) {
                         val currentSrvHash = HoppscotchDataConverter.computeServerRequestHashFromJson(serverReqJson)
                         serverChanged = currentSrvHash != storedSrvHash
                         LogUtil.info(log) { "  服务端请求 Hash: 当前=$currentSrvHash, 持久化=$storedSrvHash" }
@@ -1194,10 +1246,16 @@ class HoppscotchSyncPanel(private val project: Project) {
                     else -> SyncStatus.SYNCED
                 }
             } else {
-                LogUtil.info(log) { "  → 状态: UNSYNCED (服务端无此标题)" }
+                LogUtil.info(log) { "  → 状态: UNSYNCED (服务端无此请求)" }
                 SyncStatus.UNSYNCED
             }
             LogUtil.info(log) { "------------------------" }
+        }
+
+        // 保存回填的 serverId
+        if (hasPendingUpdates) {
+            settings.setSyncStatusMap(updatedMap)
+            LogUtil.info(log) { "已持久化回填的 serverId" }
         }
 
         LogUtil.info(log) { "=== 检查同步状态完成 ===" }
@@ -1301,10 +1359,12 @@ class HoppscotchSyncPanel(private val project: Project) {
                 }
                 rowSyncStatus.add(status)
 
+                val titleText = endpoint.description?.takeIf { it.isNotBlank() } ?: endpoint.fullPath
                 tableModel.addRow(
                     arrayOf<Any>(
                         index,
                         false,
+                        titleText,
                         endpoint.fullPath,
                         endpoint.controllerClassName,
                         endpoint.httpMethod.name,

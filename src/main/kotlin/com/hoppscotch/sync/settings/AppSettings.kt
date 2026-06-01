@@ -176,13 +176,13 @@ class AppSettings : PersistentStateComponent<AppSettings.State> {
     fun getHiddenColumnSet(): Set<Int> {
         return hiddenColumnIds.split(",")
             .mapNotNull { it.trim().toIntOrNull() }
-            .filter { it in 0..6 }
+            .filter { it in 0..7 }
             .toSet()
     }
 
     /** 保存隐藏列索引集合 */
     fun setHiddenColumns(columns: Set<Int>) {
-        hiddenColumnIds = columns.filter { it in 0..6 }.sorted().joinToString(",")
+        hiddenColumnIds = columns.filter { it in 0..7 }.sorted().joinToString(",")
         // 列 0(#) 和 1(复选框) 不允许隐藏，自动过滤
     }
 
@@ -194,7 +194,7 @@ class AppSettings : PersistentStateComponent<AppSettings.State> {
             if (parts.size == 2) {
                 val col = parts[0].toIntOrNull()
                 val w = parts[1].toIntOrNull()
-                if (col != null && w != null && col in 2..6) col to w else null
+                if (col != null && w != null && col in 2..7) col to w else null
             } else null
         }.toMap()
     }
@@ -202,7 +202,7 @@ class AppSettings : PersistentStateComponent<AppSettings.State> {
     /** 持久化列宽度映射 */
     fun setColumnWidths(widths: Map<Int, Int>) {
         columnWidths = widths.entries
-            .filter { it.key in 2..6 }
+            .filter { it.key in 2..7 }
             .sortedBy { it.key }
             .joinToString(",") { "${it.key}:${it.value}" }
     }

@@ -41,21 +41,54 @@ class HoppscotchDataConverter {
         }
 
         /**
-         * 从持久化字符串中解析本地 hash。
-         * 格式： "localHash,srvHash"
+         * 检测持久化值是否包含 serverId。
+         * 新格式 "serverId,localHash,srvHash"  有 2 个逗号 → true
+         * 旧格式 "localHash,srvHash"           有 1 个逗号 → false
          */
-        fun parseLocalHash(value: String): Int = value.substringBefore(",").toIntOrNull() ?: 0
+        private fun hasServerId(value: String): Boolean = value.count { it == ',' } >= 2
+
+        /**
+         * 从持久化字符串中解析服务端请求 id。
+         * 格式： "serverId,localHash,srvHash" → serverId
+         * 旧格式（无 serverId）→ null
+         */
+        fun parseServerId(value: String): String? {
+            if (!hasServerId(value)) return null
+            return value.substringBefore(",").takeIf { it.isNotEmpty() }
+        }
+
+        /**
+         * 从持久化字符串中解析本地 hash。
+         * 新格式 "serverId,localHash,srvHash" → localHash
+         * 旧格式 "localHash,srvHash"           → localHash
+         * 旧格式 "localHash"                   → localHash
+         */
+        fun parseLocalHash(value: String): Int {
+            val v = if (hasServerId(value)) value.substringAfter(",") else value
+            return v.substringBefore(",").toIntOrNull() ?: 0
+        }
 
         /**
          * 从持久化字符串中解析服务端请求 hash。
-         * 格式： "localHash,srvHash"
+         * 新格式 "serverId,localHash,srvHash" → srvHash
+         * 旧格式 "localHash,srvHash"           → srvHash
          */
-        fun parseSrvReqHash(value: String): Int = value.substringAfter(",", "0").toIntOrNull() ?: 0
+        fun parseSrvReqHash(value: String): Int {
+            val v = if (hasServerId(value)) value.substringAfter(",") else value
+            return v.substringAfter(",", "0").toIntOrNull() ?: 0
+        }
 
         /**
-         * 构建持久化值字符串。
+         * 构建持久化值字符串（无 serverId，旧格式）。
+         * 格式： "localHash,srvHash"
          */
         fun buildSyncValue(localHash: Int, srvHash: Int): String = "$localHash,$srvHash"
+
+        /**
+         * 构建持久化值字符串（含 serverId，新格式）。
+         * 格式： "serverId,localHash,srvHash"
+         */
+        fun buildSyncValue(serverId: String, localHash: Int, srvHash: Int): String = "$serverId,$localHash,$srvHash"
     }
 
     /**
@@ -164,8 +197,10 @@ class HoppscotchDataConverter {
             else -> HoppscotchBody()
         }
 
+        val displayName = endpoint.description?.takeIf { it.isNotBlank() }
+            ?: "${endpoint.httpMethod.name} ${endpoint.fullPath}"
         return HoppscotchRequest(
-            name = "${endpoint.httpMethod.name} ${endpoint.fullPath}",
+            name = displayName,
             method = endpoint.httpMethod.name,
             endpoint = endpoint.fullPath,
             params = params,
