@@ -628,9 +628,9 @@ class HoppscotchSyncPanel(private val project: Project) {
             g2.stroke = BasicStroke(1f)
             g2.drawRoundRect(pad, tagY, tagW, tagH, arc, arc)
 
-            // 标签文字
+            // 标签文字（暗一些，降低视觉层级）
             if (line2 != null) {
-                g2.color = foreground
+                g2.color = Color(foreground.red, foreground.green, foreground.blue, 140)
                 g2.drawString(line2, pad + tagPad, tagY + fm.ascent + 1)
             }
 
@@ -838,7 +838,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         }
     }
 
-    /** 从 [AppSettings] 恢复列可见性 */
+    /** 从 [AppSettings] 恢复列可见性及持久化宽度 */
     private fun applyColumnVisibility() {
         val hidden = AppSettings.getInstance().getHiddenColumnSet()
         val saved = AppSettings.getInstance().getColumnWidthMap()
@@ -856,6 +856,15 @@ class HoppscotchSyncPanel(private val project: Project) {
                 val removed = removedColumns.remove(colIdx)
                 if (removed != null) {
                     restoreRemovedColumn(removed, colIdx, w, saved)
+                } else {
+                    // 已在模型中的列：应用持久化的宽度
+                    val col = findVisibleColumn(colIdx) ?: continue
+                    val savedWidth = saved[colIdx]
+                    if (savedWidth != null && savedWidth > w.min) {
+                        col.preferredWidth = savedWidth
+                    }
+                    col.minWidth = w.min
+                    col.maxWidth = w.max
                 }
             }
         }
