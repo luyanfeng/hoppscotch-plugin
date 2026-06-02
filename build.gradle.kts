@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-version = "1.1.0"
+            version = "1.2.0"
 
 repositories {
     mavenCentral()
@@ -50,7 +50,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-            version = "1.1.0"
+version = "1.2.0"
         description = """
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
             <p>Features:</p>
@@ -61,8 +61,9 @@ intellijPlatform {
                 <li>Tool window for easy management</li>
             </ul>
         """.trimIndent()
-        changeNotes = """
+            changeNotes = """
             <ul>
+                <li><b>1.2.0</b> 新增: 物理列显隐; 标题列合并入路径列; 接口列显示 @Api tag; 列宽跨会话持久化; 列显隐恢复宽度; 支持以项目及类结构生成子集合</li>
                 <li><b>1.1.0</b> 新增: 标题列; 支持 @ApiOperation 标题; 同步状态持久化 serverId</li>
                 <li><b>1.0.0</b> Initial release</li>
             </ul>
