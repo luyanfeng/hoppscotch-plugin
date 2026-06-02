@@ -124,10 +124,44 @@ class SyncService(
                 collectionsCreated++
             }
 
-            // 2b. 查询该集合中已有的请求（仅对已有集合才查询，新建集合已知为空）
+            // 2b. 在目标+子目录模式下，再创建 Controller 级子集合（@Api/类@RequestMapping）
+            val requestContainerId: String
+            val isExistingContainer: Boolean
+
+            if (targetParentCollectionId != null) {
+                val controllerGroupTitle = buildControllerGroupTitle(group)
+                indicator?.let {
+                    it.text = "[${groupIndex + 1}/$totalCollections] Controller 子集合: $controllerGroupTitle"
+                }
+
+                val existingSubCols = client.listChildCollections(collectionInfo.id)
+                    .getOrNull()?.associateBy { it.title } ?: emptyMap()
+                val existingSubCol = existingSubCols[controllerGroupTitle]
+
+                if (existingSubCol != null) {
+                    requestContainerId = existingSubCol.id
+                    isExistingContainer = true
+                } else {
+                    val subColResult = client.createChildCollection(controllerGroupTitle, collectionInfo.id)
+                    if (subColResult.isSuccess) {
+                        requestContainerId = subColResult.getOrThrow().id
+                        isExistingContainer = false
+                    } else {
+                        // 回退到模块集合
+                        requestContainerId = collectionInfo.id
+                        isExistingContainer = existingCollection != null
+                        errors.add("Controller 子集合 [$controllerGroupTitle] 创建失败: ${subColResult.exceptionOrNull()?.message}")
+                    }
+                }
+            } else {
+                requestContainerId = collectionInfo.id
+                isExistingContainer = existingCollection != null
+            }
+
+            // 2c. 查询该集合中已有的请求（仅对已有集合才查询，新建集合已知为空）
             // 使用 methodEndpointKey（method:endpoint）作为匹配 key，不依赖 title
-            val existingRequestsMap: Map<String, RequestInfo> = if (existingCollection != null) {
-                client.listRequests(collectionInfo.id)
+            val existingRequestsMap: Map<String, RequestInfo> = if (isExistingContainer) {
+                client.listRequests(requestContainerId)
                     .getOrNull()
                     ?.mapNotNull { req -> req.methodEndpointKey?.let { it to req } }
                     ?.toMap() ?: emptyMap()
@@ -135,7 +169,7 @@ class SyncService(
                 emptyMap()
             }
 
-            // 2c. 遍历组内端点创建请求
+            // 2d. 遍历组内端点创建请求
             for ((reqIndex, endpoint) in group.endpoints.withIndex()) {
                 val requestTitle = buildRequestTitle(endpoint)
                 val matchKey = buildMatchKey(endpoint)
@@ -229,7 +263,7 @@ class SyncService(
                 }
 
                 // 创建请求
-                val requestResult = client.createRequest(collectionInfo.id, requestTitle, requestJson)
+                val requestResult = client.createRequest(requestContainerId, requestTitle, requestJson)
                 if (requestResult.isSuccess) {
                     requestsCreated++
                     val ek = computeEndpointKey(endpoint, group)
@@ -277,6 +311,23 @@ class SyncService(
     private fun buildCollectionTitle(group: ControllerGroup): String {
         val raw = if (group.moduleName.isNotBlank()) group.moduleName
         else group.controllerClassName
+        return sanitizeTitle(raw)
+    }
+
+    /**
+     * 构建 Controller 分组的标题，用于目标+子目录模式下新增的 Controller 级子集合。
+     *
+     * 优先级：
+     * 1. @Api(value = "...") 注解的值
+     * 2. 类级别 @RequestMapping 路径
+     * 3. Controller 类名（兜底）
+     */
+    private fun buildControllerGroupTitle(group: ControllerGroup): String {
+        val raw = when {
+            !group.apiTag.isNullOrBlank() -> group.apiTag
+            !group.classLevelPath.isNullOrBlank() -> group.classLevelPath
+            else -> group.controllerClassName
+        }
         return sanitizeTitle(raw)
     }
 

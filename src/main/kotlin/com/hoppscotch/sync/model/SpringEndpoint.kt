@@ -52,5 +52,6 @@ data class ControllerGroup(
     val controllerQualifiedName: String,
     val classLevelPath: String?,
     val moduleName: String,
-    val endpoints: List<SpringEndpoint>
+    val endpoints: List<SpringEndpoint>,
+    val apiTag: String? = null
 )

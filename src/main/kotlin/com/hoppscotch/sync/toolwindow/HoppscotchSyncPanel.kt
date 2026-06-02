@@ -85,13 +85,19 @@ class HoppscotchSyncPanel(private val project: Project) {
 
     /** 列索引 → (列名 i18n key, 默认宽度) */
     private val columnDefaults = mapOf(
-        2 to ("table.column.title" to ColumnWidth(0, 200)),
-        3 to ("table.column.path" to ColumnWidth(0, 300)),
-        4 to ("table.column.controller" to ColumnWidth(0, 180)),
+        2 to ("table.column.title" to ColumnWidth(50, 200)),
+        3 to ("table.column.path" to ColumnWidth(50, 300)),
+        4 to ("table.column.controller" to ColumnWidth(50, 180)),
         5 to ("table.column.method" to ColumnWidth(110, 150, 150)),  // 固定宽度，需容纳中英文表头和 GET/POST/DELETE
-        6 to ("table.column.parameters" to ColumnWidth(0, 200)),
-        7 to ("table.column.project" to ColumnWidth(0, 120))
+        6 to ("table.column.parameters" to ColumnWidth(50, 200)),
+        7 to ("table.column.project" to ColumnWidth(50, 120))
     )
+
+    /**
+     * 已从 columnModel 中移除的列，按 modelIndex 索引。
+     * 填充列时用于恢复，避免重复创建 TableColumn。
+     */
+    private val removedColumns = mutableMapOf<Int, javax.swing.table.TableColumn>()
 
     /** 复制当前选中单元格的文本内容到系统剪贴板 */
     private fun copySelectedCell(table: JTable) {
@@ -642,13 +648,12 @@ class HoppscotchSyncPanel(private val project: Project) {
     private fun autoSizeColumns() {
         val saved = AppSettings.getInstance().getColumnWidthMap()
         val metrics = table.getFontMetrics(table.font)
-        val colModel = table.getColumnModel()
 
         for (colIdx in 2..6) {
             // 用户已手动调过宽度的列不覆盖
             if (colIdx in saved) continue
-
-            val col = try { colModel.getColumn(colIdx) } catch (_: Exception) { null } ?: continue
+            // 已隐藏（已从 columnModel 中移除）的列跳过
+            val col = findVisibleColumn(colIdx) ?: continue
             val headerText = col.headerValue?.toString() ?: ""
             var maxWidth = metrics.stringWidth(headerText) + 20
 
@@ -658,59 +663,114 @@ class HoppscotchSyncPanel(private val project: Project) {
                 if (w > maxWidth) maxWidth = w
             }
 
-            col.minWidth = 0
+            col.minWidth = 50
             col.preferredWidth = (maxWidth + 20).coerceIn(60, 600)
             col.maxWidth = Int.MAX_VALUE
         }
     }
 
-    /** 保存列 2-6 的当前宽度到 [AppSettings] */
+    /** 保存列 2-6 的当前宽度到 [AppSettings]，已移除的列自动跳过。 */
     private fun saveColumnWidths() {
         val widths = mutableMapOf<Int, Int>()
-        val colModel = table.getColumnModel()
         for (colIdx in 2..6) {
-            try { widths[colIdx] = colModel.getColumn(colIdx).width } catch (_: Exception) {}
+            val col = findVisibleColumn(colIdx) ?: continue
+            try { widths[colIdx] = col.width } catch (_: Exception) {}
         }
         AppSettings.getInstance().setColumnWidths(widths)
     }
 
     // ====================================================================
-    //  Column visibility
+    //  Column visibility — 物理移除/添加列
     // ====================================================================
+
+    /**
+     * 在 columnModel 中查找 modelIndex 匹配的列。
+     * 仅遍历当前可见（未移除）的列。
+     */
+    private fun findVisibleColumn(modelIndex: Int): javax.swing.table.TableColumn? {
+        val colModel = table.getColumnModel()
+        for (i in 0 until colModel.columnCount) {
+            val col = colModel.getColumn(i)
+            if (col.modelIndex == modelIndex) return col
+        }
+        return null
+    }
+
+    /**
+     * 将被移除的列重新添加到 columnModel 的正确位置。
+     * 插入到第一个 modelIndex 大于 [colIdx] 的列之前，保持原始顺序。
+     */
+    private fun restoreRemovedColumn(
+        col: javax.swing.table.TableColumn,
+        colIdx: Int,
+        w: ColumnWidth,
+        saved: Map<Int, Int>
+    ) {
+        val colModel = table.getColumnModel()
+        col.minWidth = w.min
+        val savedWidth = saved[colIdx]
+        col.preferredWidth = if (savedWidth != null && savedWidth > w.min) savedWidth else w.pref
+        col.maxWidth = w.max
+
+        // 找到插入位置：第一个 modelIndex > colIdx 的 view 索引
+        var insertIdx = colModel.columnCount
+        for (i in 0 until colModel.columnCount) {
+            if (colModel.getColumn(i).modelIndex > colIdx) {
+                insertIdx = i
+                break
+            }
+        }
+
+        colModel.addColumn(col)
+        // 若插入位置不在末尾，移过去
+        if (insertIdx < colModel.columnCount - 1) {
+            colModel.moveColumn(colModel.columnCount - 1, insertIdx)
+        }
+    }
 
     /** 从 [AppSettings] 恢复列可见性 */
     private fun applyColumnVisibility() {
         val hidden = AppSettings.getInstance().getHiddenColumnSet()
         val saved = AppSettings.getInstance().getColumnWidthMap()
-        for ((colIdx, _) in columnDefaults) {
-            val col = try { table.getColumnModel().getColumn(colIdx) } catch (_: Exception) { null } ?: continue
+        for ((colIdx, columnDef) in columnDefaults) {
+            val (_, w) = columnDef
             if (colIdx in hidden) {
-                col.minWidth = 0; col.maxWidth = 0; col.preferredWidth = 0; col.width = 0
+                // 隐藏：若列当前在 columnModel 中，移除
+                val existing = findVisibleColumn(colIdx)
+                if (existing != null) {
+                    removedColumns[colIdx] = existing
+                    table.getColumnModel().removeColumn(existing)
+                }
             } else {
-                val (_, w) = columnDefaults[colIdx]!!
-                col.minWidth = w.min
-                col.preferredWidth = saved[colIdx] ?: w.pref
-                col.maxWidth = w.max
+                // 显示：若列当前被移除，加回
+                val removed = removedColumns.remove(colIdx)
+                if (removed != null) {
+                    restoreRemovedColumn(removed, colIdx, w, saved)
+                }
             }
         }
     }
 
     /** 切换单列可见性并持久化 */
     private fun toggleColumn(columnIdx: Int, visible: Boolean) {
-        val col = try { table.getColumnModel().getColumn(columnIdx) } catch (_: Exception) { return }
         val settings = AppSettings.getInstance()
         val hidden = settings.getHiddenColumnSet().toMutableSet()
 
         if (visible) {
             hidden.remove(columnIdx)
-            val (_, w) = columnDefaults[columnIdx] ?: return
-            val saved = settings.getColumnWidthMap()
-            col.minWidth = w.min
-            col.preferredWidth = saved[columnIdx] ?: w.pref
-            col.maxWidth = w.max
+            val removed = removedColumns.remove(columnIdx)
+            if (removed != null) {
+                val (_, w) = columnDefaults[columnIdx] ?: return
+                val saved = settings.getColumnWidthMap()
+                restoreRemovedColumn(removed, columnIdx, w, saved)
+            }
         } else {
             hidden.add(columnIdx)
-            col.minWidth = 0; col.maxWidth = 0; col.preferredWidth = 0; col.width = 0
+            val col = findVisibleColumn(columnIdx)
+            if (col != null) {
+                removedColumns[columnIdx] = col
+                table.getColumnModel().removeColumn(col)
+            }
         }
 
         settings.setHiddenColumns(hidden)
@@ -1382,6 +1442,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         updateProjectButton()
         applyFilter()
         autoSizeColumns()
+        applyColumnVisibility() // 确保隐藏列不因 autoSizeColumns 而重新显示
     }
 
     // ====================================================================

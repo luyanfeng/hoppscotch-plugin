@@ -43,9 +43,10 @@ class SpringControllerParser(private val project: Project) {
         private const val ANNOTATION_REQUEST_BODY = "org.springframework.web.bind.annotation.RequestBody"
         private const val ANNOTATION_REQUEST_HEADER = "org.springframework.web.bind.annotation.RequestHeader"
 
-        // Swagger / OpenAPI 注解
-        private const val ANNOTATION_API_OPERATION = "io.swagger.annotations.ApiOperation"
-        private const val ANNOTATION_OPERATION_V3 = "io.swagger.v3.oas.annotations.Operation"
+    // Swagger / OpenAPI 注解
+    private const val ANNOTATION_API = "io.swagger.annotations.Api"
+    private const val ANNOTATION_API_OPERATION = "io.swagger.annotations.ApiOperation"
+    private const val ANNOTATION_OPERATION_V3 = "io.swagger.v3.oas.annotations.Operation"
 
         // JSON 骨架展示相关常量
         private val PRIMITIVE_TYPES = setOf(
@@ -253,6 +254,7 @@ class SpringControllerParser(private val project: Project) {
     fun parseControllerClass(psiClass: PsiClass, moduleName: String = ""): ControllerGroup? {
         return try {
             val classLevelPath = extractClassLevelPath(psiClass)
+            val apiTag = extractApiTag(psiClass)
 
             val endpoints = psiClass.methods
                 .flatMap { method -> parseMethodEndpoints(method, classLevelPath) }
@@ -264,7 +266,8 @@ class SpringControllerParser(private val project: Project) {
                 controllerQualifiedName = psiClass.qualifiedName ?: "Unknown",
                 classLevelPath = classLevelPath.ifEmpty { null },
                 moduleName = moduleName,
-                endpoints = endpoints
+                endpoints = endpoints,
+                apiTag = apiTag
             )
         } catch (e: Exception) {
             log.warn("解析 Controller 类 '${psiClass.qualifiedName}' 时出错: ${e.message}", e)
@@ -283,6 +286,49 @@ class SpringControllerParser(private val project: Project) {
             ?: return ""
 
         return getPathFromAnnotation(annotation) ?: ""
+    }
+
+    /**
+     * 从类上提取 @Api 注解的 value，作为 Controller 分组的标题。
+     *
+     * 支持 Swagger 1.x/2.x 的 @Api 注解：
+     * - @Api("用户管理")                  → value 属性
+     * - @Api(value = "用户管理")           → value 属性
+     * - @Api(tags = {"用户", "管理"})      → tags 数组首个元素
+     *
+     * @return 找到的有效标签值，没有任何值则返回 null
+     */
+    private fun extractApiTag(psiClass: PsiClass): String? {
+        val annotation = psiClass.annotations.firstOrNull {
+            it.qualifiedName == ANNOTATION_API
+        } ?: return null
+
+        // 优先尝试 value 属性（最常见用法）
+        val valueAttr = annotation.findAttributeValue("value")
+        if (valueAttr != null) {
+            val value = extractStringValue(valueAttr)
+            if (!value.isNullOrBlank()) return value
+        }
+
+        // 其次尝试 tags 属性（数组或单个值）
+        val tagsAttr = annotation.findAttributeValue("tags")
+        if (tagsAttr != null) {
+            when (tagsAttr) {
+                is PsiArrayInitializerMemberValue -> {
+                    val firstTag = tagsAttr.initializers.firstOrNull()
+                    if (firstTag != null) {
+                        val tag = extractStringValue(firstTag)
+                        if (!tag.isNullOrBlank()) return tag
+                    }
+                }
+                else -> {
+                    val tag = extractStringValue(tagsAttr)
+                    if (!tag.isNullOrBlank()) return tag
+                }
+            }
+        }
+
+        return null
     }
 
     // ======================== 解析方法端点 ========================
