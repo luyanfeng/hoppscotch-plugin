@@ -99,7 +99,7 @@ class CollectionPickerDialog(
             border = BorderFactory.createEmptyBorder(4, 8, 4, 8)
         }
 
-        createSubDirCheckBox = JCheckBox("以项目名生成子目录", true).apply {
+        createSubDirCheckBox = JCheckBox("以项目及类结构生成子集合", true).apply {
             border = BorderFactory.createEmptyBorder(0, 8, 4, 8)
             isSelected = AppSettings.getInstance().createSubDirectory
         }
