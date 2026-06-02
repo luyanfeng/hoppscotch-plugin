@@ -33,7 +33,11 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.Point
+import java.awt.RenderingHints
+import java.awt.BasicStroke
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.event.ActionEvent
@@ -85,12 +89,11 @@ class HoppscotchSyncPanel(private val project: Project) {
 
     /** 列索引 → (列名 i18n key, 默认宽度) */
     private val columnDefaults = mapOf(
-        2 to ("table.column.title" to ColumnWidth(50, 200)),
-        3 to ("table.column.path" to ColumnWidth(50, 300)),
-        4 to ("table.column.controller" to ColumnWidth(50, 180)),
-        5 to ("table.column.method" to ColumnWidth(110, 150, 150)),  // 固定宽度，需容纳中英文表头和 GET/POST/DELETE
-        6 to ("table.column.parameters" to ColumnWidth(50, 200)),
-        7 to ("table.column.project" to ColumnWidth(50, 120))
+        2 to ("table.column.path" to ColumnWidth(50, 300)),
+        3 to ("table.column.controller" to ColumnWidth(50, 180)),
+        4 to ("table.column.method" to ColumnWidth(110, 150, 150)),  // 固定宽度，需容纳中英文表头和 GET/POST/DELETE
+        5 to ("table.column.parameters" to ColumnWidth(50, 200)),
+        6 to ("table.column.project" to ColumnWidth(50, 120))
     )
 
     /**
@@ -99,19 +102,28 @@ class HoppscotchSyncPanel(private val project: Project) {
      */
     private val removedColumns = mutableMapOf<Int, javax.swing.table.TableColumn>()
 
-    /** 复制当前选中单元格的文本内容到系统剪贴板 */
+    /**
+     * 复制当前选中单元格的文本内容到系统剪贴板 */
     private fun copySelectedCell(table: JTable) {
-        val row = table.selectedRow
-        val col = table.selectedColumn
-        if (row >= 0 && col >= 0) {
-            val modelRow = table.convertRowIndexToModel(row)
-            val modelCol = table.convertColumnIndexToModel(col)
-            val value = table.model.getValueAt(modelRow, modelCol)
-            val text = value?.toString() ?: ""
-            if (text.isNotBlank()) {
-                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                clipboard.setContents(StringSelection(text), null)
+        try {
+            val row = table.selectedRow
+            val col = table.selectedColumn
+            if (row >= 0 && col >= 0) {
+                val modelRow = table.convertRowIndexToModel(row)
+                val modelCol = table.convertColumnIndexToModel(col)
+                val value = tableModel.getValueAt(modelRow, modelCol)
+                val text = if (value is TagCellValue) {
+                    if (value.line2 != null) "${value.line1} ${value.line2}" else value.line1
+                } else {
+                    value?.toString() ?: ""
+                }
+                if (text.isNotBlank()) {
+                    val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+                    clipboard.setContents(StringSelection(text), null)
+                }
             }
+        } catch (e: Exception) {
+            log.warn("复制单元格失败", e)
         }
     }
 
@@ -127,11 +139,10 @@ class HoppscotchSyncPanel(private val project: Project) {
         selectedProjects = if (cachedProjects.isEmpty()) allProjects.toSet()
             else cachedProjects.filter { it in allProjects }.toSet().ifEmpty { allProjects.toSet() }
 
-        // ── Table columns: # | ☑ | Title | Path | Controller | Method | Parameters | Project ──
+        // ── Table columns: # | ☑ | Path | Controller | Method | Parameters | Project ──
         val columns = arrayOf(
             I18n.message("table.column.index"),
             I18n.message("table.column.checkbox"),
-            I18n.message("table.column.title"),
             I18n.message("table.column.path"),
             I18n.message("table.column.controller"),
             I18n.message("table.column.method"),
@@ -144,6 +155,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                 return when (column) {
                     0 -> Int::class.java
                     1 -> Boolean::class.java
+                    2, 3 -> TagCellValue::class.java
                     else -> String::class.java
                 }
             }
@@ -198,12 +210,14 @@ class HoppscotchSyncPanel(private val project: Project) {
             setDefaultRenderer(Int::class.java, syncRenderer)
             setDefaultRenderer(String::class.java, syncRenderer)
 
+            // 路径列和接口列多行渲染器
+            setDefaultRenderer(TagCellValue::class.java, TagCellRenderer())
+
             // Other column widths
             try { getColumn(I18n.message("table.column.index"))?.apply {
                 minWidth = 50; preferredWidth = 80; maxWidth = 130
             } } catch (_: Exception) {}
             for (colModel in listOf(
-                I18n.message("table.column.title") to 200,
                 I18n.message("table.column.path") to 300,
                 I18n.message("table.column.controller") to 180,
                 I18n.message("table.column.method") to 80,
@@ -529,6 +543,102 @@ class HoppscotchSyncPanel(private val project: Project) {
     }
 
     // ====================================================================
+    //  Multi-line cell renderer — path & controller columns
+    // ====================================================================
+
+    /** 路径列/接口列的单元格值：首行 + 可选的第二行描述 */
+    data class TagCellValue(val line1: String, val line2: String?) {
+        override fun toString(): String = if (line2 != null) "$line1 $line2" else line1
+    }
+
+    /**
+     * 多行单元格渲染器：
+     * - 首行：纯文本（路径或类名），严格左对齐
+     * - 第二行有 [TagCellValue.line2] 时：以圆角标签展示在下方
+     * - 兼容同步状态背景色和选中高亮
+     */
+    private inner class TagCellRenderer : JLabel(), TableCellRenderer {
+        private var line1 = ""
+        private var line2: String? = null
+
+        private val pad = 4   // 水平内边距
+        private val tagPad = 6 // 标签文字内边距
+
+        override fun getTableCellRendererComponent(
+            table: JTable?, value: Any?, isSelected: Boolean,
+            hasFocus: Boolean, row: Int, column: Int
+        ): Component {
+            val tagValue = value as? TagCellValue
+            line1 = tagValue?.line1 ?: value?.toString() ?: ""
+            line2 = tagValue?.line2
+
+            val f = table?.font ?: UIManager.getFont("Label.font")
+            font = f
+
+            // 同步状态背景
+            val sorter = table?.rowSorter
+            val modelRow = if (sorter != null) {
+                try { sorter.convertRowIndexToModel(row) } catch (_: IndexOutOfBoundsException) { -1 }
+            } else { row }
+            val status = if (modelRow in rowSyncStatus.indices) rowSyncStatus[modelRow]
+            else SyncStatus.UNSYNCED
+
+            if (isSelected) {
+                background = table?.selectionBackground ?: table?.background ?: Color.WHITE
+                foreground = table?.selectionForeground ?: table?.foreground ?: Color.BLACK
+            } else {
+                foreground = table?.foreground ?: Color.BLACK
+                background = when (status) {
+                    SyncStatus.SYNCED -> JBColor(Color(232, 250, 232), Color(50, 75, 50))
+                    SyncStatus.MODIFIED -> JBColor(Color(220, 235, 252), Color(45, 55, 75))
+                    SyncStatus.UNSYNCED -> table?.background ?: Color.WHITE
+                }
+            }
+            return this
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+
+            val fm = g2.fontMetrics
+            val w = width
+            val h = height
+            val arc = 12
+
+            // 1. 单元格背景
+            g2.color = background
+            g2.fillRect(0, 0, w, h)
+
+            // 2. 第一行 — 严格左对齐
+            g2.color = foreground
+            g2.drawString(line1, pad, fm.ascent + 2)
+
+            // 3. 第二行标签 — 用前景色低 alpha 填充+描边，任何 LAF 高亮覆盖时光影统一
+            val tagY = fm.height + 5
+            val tagW = w - pad * 2
+            val tagH = (fm.height + 6).coerceAtLeast(arc * 2)
+
+            val alphaFill = 20
+            val alphaBorder = 50
+            g2.color = Color(foreground.red, foreground.green, foreground.blue, alphaFill)
+            g2.fillRoundRect(pad, tagY, tagW, tagH, arc, arc)
+            g2.color = Color(foreground.red, foreground.green, foreground.blue, alphaBorder)
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(pad, tagY, tagW, tagH, arc, arc)
+
+            // 标签文字
+            if (line2 != null) {
+                g2.color = foreground
+                g2.drawString(line2, pad + tagPad, tagY + fm.ascent + 1)
+            }
+
+            g2.dispose()
+        }
+    }
+
+    // ====================================================================
     //  Selection
     // ====================================================================
 
@@ -644,7 +754,7 @@ class HoppscotchSyncPanel(private val project: Project) {
     //  Column auto-size & width persistence
     // ====================================================================
 
-    /** 列 3-6 按内容自适应宽度。用户已保存的宽度不覆盖。 */
+    /** 列 2-5 按内容自适应宽度。用户已保存的宽度不覆盖。 */
     private fun autoSizeColumns() {
         val saved = AppSettings.getInstance().getColumnWidthMap()
         val metrics = table.getFontMetrics(table.font)
@@ -669,7 +779,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         }
     }
 
-    /** 保存列 2-6 的当前宽度到 [AppSettings]，已移除的列自动跳过。 */
+    /** 保存列 2-5 的当前宽度到 [AppSettings]，已移除的列自动跳过。 */
     private fun saveColumnWidths() {
         val widths = mutableMapOf<Int, Int>()
         for (colIdx in 2..6) {
@@ -1419,14 +1529,17 @@ class HoppscotchSyncPanel(private val project: Project) {
                 }
                 rowSyncStatus.add(status)
 
-                val titleText = endpoint.description?.takeIf { it.isNotBlank() } ?: endpoint.fullPath
+                // ── 多行单元格：标题并入路径列，接口类列追加 @Api value ──
+                val desc = endpoint.description?.takeIf { it.isNotBlank() }
+                val apiTag = group.apiTag?.takeIf { it.isNotBlank() }
+                val pathCell = TagCellValue(endpoint.fullPath, desc)
+                val controllerCell = TagCellValue(endpoint.controllerClassName, apiTag)
                 tableModel.addRow(
                     arrayOf<Any>(
                         index,
                         false,
-                        titleText,
-                        endpoint.fullPath,
-                        endpoint.controllerClassName,
+                        pathCell,
+                        controllerCell,
                         endpoint.httpMethod.name,
                         formatParameters(endpoint.parameters, endpoint.consumes),
                         group.moduleName
@@ -1437,6 +1550,9 @@ class HoppscotchSyncPanel(private val project: Project) {
 
         // 恢复 frozen 表的 rowSorter
         frozenTable.rowSorter = this@HoppscotchSyncPanel.rowSorter
+
+        // 行高适配两行内容（frozenTable 已覆盖 getRowHeight 跟随主表）
+        table.rowHeight = table.getFontMetrics(table.font).height * 2 + 16
 
         searchField.text = ""
         updateProjectButton()
