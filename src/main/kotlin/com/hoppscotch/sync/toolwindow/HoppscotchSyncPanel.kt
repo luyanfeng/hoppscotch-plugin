@@ -479,11 +479,11 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(Box.createHorizontalStrut(4))
             add(invertButton)
             add(Box.createHorizontalStrut(8))
-            add(statsLabel)
-            add(Box.createHorizontalStrut(8))
             add(checkSyncButton)
             add(Box.createHorizontalStrut(8))
             add(syncButton)
+            add(Box.createHorizontalStrut(8))
+            add(statsLabel)
             add(Box.createHorizontalGlue())
         }
 
