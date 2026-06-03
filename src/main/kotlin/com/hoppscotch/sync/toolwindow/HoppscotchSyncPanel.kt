@@ -998,6 +998,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                 // 3. 统一更新 UI
                 SwingUtilities.invokeLater {
                     scannedGroups = groups ?: emptyList()
+                    searchField.text = ""  // 刷新时重置过滤
                     refreshTable()
                     // 用服务端校验结果覆盖同步状态
                     if (serverStatuses != null) {
@@ -1595,7 +1596,6 @@ class HoppscotchSyncPanel(private val project: Project) {
         // 行高适配两行内容（frozenTable 已覆盖 getRowHeight 跟随主表）
         table.rowHeight = table.getFontMetrics(table.font).height * 2 + 16
 
-        searchField.text = ""
         updateProjectButton()
         applyFilter()
         autoSizeColumns()
