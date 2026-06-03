@@ -1369,9 +1369,13 @@ class HoppscotchSyncPanel(private val project: Project) {
 
         // 使用扫描数据判断每行同步状态，对比本地 hash + 服务端请求 hash
         val statuses = MutableList(freshEndpoints.size) { SyncStatus.UNSYNCED }
+        val total = freshEndpoints.size
         for (i in freshEndpoints.indices) {
             val endpoint = freshEndpoints[i]
             val group = freshGroups[i]
+
+            indicator?.text = I18n.message("progress.checking.item",
+                group.controllerClassName, endpoint.path, i + 1, total)
 
             // 只检查选中项目的端点
             if (group.moduleName !in selectedProjects) {
