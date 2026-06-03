@@ -68,6 +68,7 @@ class HoppscotchSyncPanel(private val project: Project) {
     private val searchField: JBTextField
     private val projectButton: JButton
     private val columnsButton: JButton
+    private val statsLabel: JLabel
     private val rowSorter: TableRowSorter<TableModel>
 
     private var scannedGroups: List<ControllerGroup> = emptyList()
@@ -467,6 +468,9 @@ class HoppscotchSyncPanel(private val project: Project) {
         val invertButton = JButton(I18n.message("button.invert")).apply {
             addActionListener { invertSelection() }
         }
+        statsLabel = JLabel().apply {
+            foreground = JBColor.GRAY
+        }
         val selectionToolbar = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             border = BorderFactory.createEmptyBorder(0, 8, 8, 8)
@@ -474,6 +478,8 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(selectAllButton)
             add(Box.createHorizontalStrut(4))
             add(invertButton)
+            add(Box.createHorizontalStrut(8))
+            add(statsLabel)
             add(Box.createHorizontalGlue())
         }
 
@@ -648,6 +654,7 @@ class HoppscotchSyncPanel(private val project: Project) {
             val modelRow = rowSorter.convertRowIndexToModel(viewRow)
             tableModel.setValueAt(true, modelRow, 1)
         }
+        updateStatsLabel()
     }
 
     /** 反选所有可见行 */
@@ -657,10 +664,27 @@ class HoppscotchSyncPanel(private val project: Project) {
             val current = tableModel.getValueAt(modelRow, 1) as? Boolean ?: false
             tableModel.setValueAt(!current, modelRow, 1)
         }
+        updateStatsLabel()
     }
 
     /** 排序/过滤后的可见行数 */
     private fun viewRowCount(): Int = rowSorter.viewRowCount
+
+    /** 更新统计标签：选中/未选中、已同步/未同步（仅可见行） */
+    private fun updateStatsLabel() {
+        val visibleRows = viewRowCount()
+        var selected = 0
+        var synced = 0
+        for (viewRow in 0 until visibleRows) {
+            val modelRow = rowSorter.convertRowIndexToModel(viewRow)
+            val checked = tableModel.getValueAt(modelRow, 1) as? Boolean ?: false
+            if (checked) selected++
+            if (modelRow in rowSyncStatus.indices && rowSyncStatus[modelRow] == SyncStatus.SYNCED) synced++
+        }
+        val unselected = visibleRows - selected
+        val unsynced = visibleRows - synced
+        statsLabel.text = I18n.message("button.statsFormat", selected, unselected, synced, unsynced)
+    }
 
     // ====================================================================
     //  Project multi-select popup
@@ -740,6 +764,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         }
         // 过滤自动选中：可见行 √，不可见行 ✗
         syncSelectionWithFilter()
+        updateStatsLabel()
     }
 
     /** 可见行选中，隐藏行取消选中 */
@@ -977,6 +1002,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                         }
                         table.repaint()
                     }
+                    updateStatsLabel()
                     cacheCurrentScanData() // 缓存扫描结果
                     updateStatusAfterScan()
                 }
@@ -1112,6 +1138,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                     }
 
                     table.repaint()
+                    updateStatsLabel()
                 }
             }
         })
@@ -1200,6 +1227,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                             }
                             table.repaint()
                         }
+                        updateStatsLabel()
                         statusLabel.text = I18n.message("status.checkDone")
                     }
                 } catch (e: Exception) {
@@ -1568,6 +1596,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         applyFilter()
         autoSizeColumns()
         applyColumnVisibility() // 确保隐藏列不因 autoSizeColumns 而重新显示
+        updateStatsLabel()
     }
 
     // ====================================================================
