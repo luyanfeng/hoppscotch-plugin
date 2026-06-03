@@ -1194,9 +1194,13 @@ class HoppscotchSyncPanel(private val project: Project) {
                 indicator.text = I18n.message("progress.indicator.checking")
 
                 try {
-                    // 仅对已勾选的端点检查同步状态
+                    // 阶段1：查询服务端数据
+                    SwingUtilities.invokeLater {
+                        statusLabel.text = I18n.message("status.checkingFetch")
+                    }
                     val serverStatuses = performServerCheck(filteredGroups, indicator)
 
+                    // 阶段2：对比完成，更新状态
                     val elapsed = System.currentTimeMillis() - startTime
                     val elapsedText = "耗时: ${elapsed}ms"
                     SwingUtilities.invokeLater {
@@ -1370,7 +1374,6 @@ class HoppscotchSyncPanel(private val project: Project) {
         // 使用扫描数据判断每行同步状态，对比本地 hash + 服务端请求 hash
         val statuses = MutableList(freshEndpoints.size) { SyncStatus.UNSYNCED }
         val total = freshEndpoints.size
-        val statusUpdateInterval = (total / 20).coerceAtLeast(1)
         for (i in freshEndpoints.indices) {
             val endpoint = freshEndpoints[i]
             val group = freshGroups[i]
@@ -1378,8 +1381,8 @@ class HoppscotchSyncPanel(private val project: Project) {
             val progressText = I18n.message("progress.checking.item",
                 group.controllerClassName, endpoint.path, i + 1, total)
             indicator?.text = progressText
-            // 节流更新底部状态标签（最多约 20 次）
-            if (i % statusUpdateInterval == 0 || i == total - 1) {
+            // 定期更新面板底部状态（每 5 条更新一次，避免 flooding EDT）
+            if (i % 5 == 0 || i == total - 1) {
                 SwingUtilities.invokeLater { statusLabel.text = progressText }
             }
 
