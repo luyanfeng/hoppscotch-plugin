@@ -458,10 +458,6 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(projectButton)
             add(Box.createHorizontalStrut(8))
             add(refreshButton)
-            add(Box.createHorizontalStrut(8))
-            add(checkSyncButton)
-            add(Box.createHorizontalStrut(8))
-            add(syncButton)
             add(Box.createHorizontalGlue())
         }
 
@@ -484,6 +480,10 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(invertButton)
             add(Box.createHorizontalStrut(8))
             add(statsLabel)
+            add(Box.createHorizontalStrut(8))
+            add(checkSyncButton)
+            add(Box.createHorizontalStrut(8))
+            add(syncButton)
             add(Box.createHorizontalGlue())
         }
 
@@ -1154,17 +1154,17 @@ class HoppscotchSyncPanel(private val project: Project) {
     // ====================================================================
 
     /**
-     * "检查同步状态"按钮：对比本地端点与服务端请求，更新每行同步状态。
+     * "检查同步状态"按钮：对比列表中已勾选的端点与服务端请求，更新其同步状态。
      *
+     * 不复扫 Controller、不刷新表格，只查已勾选项。
      * 仅从服务端获取数据做对比，不修改服务端数据。
-     * 结果与持久化 hash 一起决定 UNSYNCED / SYNCED / MODIFIED 状态。
-     * 持久化 hash 只在实际同步时写入，所以 SYNCED=hash+服务端都存在且一致。
      */
     private fun onCheckSyncStatus() {
-        if (scannedGroups.isEmpty()) {
+        val selectedPairs = getSelectedEndpointsWithGroups()
+        if (selectedPairs.isEmpty()) {
             Messages.showInfoMessage(
                 project,
-                I18n.message("dialog.checkSync.noEndpoints"),
+                I18n.message("dialog.noSelection.message"),
                 I18n.message("dialog.checkSync.title")
             )
             return
@@ -1180,6 +1180,8 @@ class HoppscotchSyncPanel(private val project: Project) {
             return
         }
 
+        val filteredGroups = buildFilteredGroups()
+
         statusLabel.text = I18n.message("status.checking")
         timeLabel.text = "耗时: --"
         val startTime = System.currentTimeMillis()
@@ -1189,31 +1191,12 @@ class HoppscotchSyncPanel(private val project: Project) {
         ) {
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
                 indicator.isIndeterminate = true
-                indicator.text = I18n.message("progress.indicator.scanning")
+                indicator.text = I18n.message("progress.indicator.checking")
 
                 try {
-                    // 1. 重新扫描，获取最新端点数据
-                    val (freshGroups, scanError) = scanControllersSafe()
-                    if (scanError != null) {
-                        log.warn("检查同步状态时重新扫描失败: ${scanError.message}", scanError)
-                        SwingUtilities.invokeLater {
-                            val elapsed = System.currentTimeMillis() - startTime
-                            timeLabel.text = "耗时: ${elapsed}ms"
-                            statusLabel.text = I18n.message("status.checkFailed")
-                            Messages.showErrorDialog(
-                                project,
-                                "重新扫描控制器失败: ${scanError.message}",
-                                I18n.message("dialog.checkSync.title")
-                            )
-                        }
-                        return
-                    }
-                    val groups = freshGroups ?: emptyList()
+                    // 仅对已勾选的端点检查同步状态
+                    val serverStatuses = performServerCheck(filteredGroups, indicator)
 
-                    // 2. 服务端同步状态检查（与 onRefresh 共用逻辑）
-                    val serverStatuses = performServerCheck(groups, indicator)
-
-                    // 3. 更新 UI
                     val elapsed = System.currentTimeMillis() - startTime
                     val elapsedText = "耗时: ${elapsed}ms"
                     SwingUtilities.invokeLater {
@@ -1223,12 +1206,22 @@ class HoppscotchSyncPanel(private val project: Project) {
                         bottomPanel.revalidate()
                         bottomPanel.repaint()
 
-                        scannedGroups = groups
-                        refreshTable()
-                        // 用服务端校验结果覆盖同步状态
                         if (serverStatuses != null) {
-                            for (i in 0 until minOf(serverStatuses.size, rowSyncStatus.size)) {
-                                rowSyncStatus[i] = serverStatuses[i]
+                            // 构建 endpointKey → status 映射
+                            val keyToStatus = mutableMapOf<String, SyncStatus>()
+                            var idx = 0
+                            for (group in filteredGroups) {
+                                for (endpoint in group.endpoints) {
+                                    keyToStatus[computeEndpointKey(endpoint, group)] = serverStatuses[idx++]
+                                }
+                            }
+                            // 只更新已勾选行的状态
+                            for (i in rowEndpoints.indices) {
+                                val key = computeEndpointKey(rowEndpoints[i], rowGroups[i])
+                                val status = keyToStatus[key]
+                                if (status != null) {
+                                    rowSyncStatus[i] = status
+                                }
                             }
                             table.repaint()
                         }
