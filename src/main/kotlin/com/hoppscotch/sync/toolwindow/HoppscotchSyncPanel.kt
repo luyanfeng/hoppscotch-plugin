@@ -160,6 +160,10 @@ class HoppscotchSyncPanel(private val project: Project) {
                     else -> String::class.java
                 }
             }
+            override fun setValueAt(aValue: Any?, row: Int, column: Int) {
+                super.setValueAt(aValue, row, column)
+                if (column == 1) updateStatsLabel()
+            }
         }
 
         rowSorter = TableRowSorter(tableModel)
