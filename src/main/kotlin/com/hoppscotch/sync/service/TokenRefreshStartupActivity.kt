@@ -19,7 +19,7 @@ import java.util.*
  *
  * - 有 refreshToken → 主动刷新一次（刷新成功则 token 续期）
  * - 只有 accessToken → 本地解码 JWT 检查 exp 字段，已过期则尝试 desktop 端点刷新
- * - 所有刷新方式都失败 → 右下角弹出通知提醒用户重新配置
+ * - 所有刷新方式都失败 → 区分「网络不通」和「Token 无效」，分别弹出对应通知
  */
 class TokenRefreshStartupActivity : StartupActivity.DumbAware {
 
@@ -43,7 +43,7 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
                 val ok = client.tryRefreshSession()
                 if (!ok && settings.accessToken.isNotBlank()) {
                     // refreshToken 方式失败，再尝试 desktop 端点
-                    tryDesktopRefreshOrNotify(settings, project)
+                    notifyRefreshFailure(settings, project)
                 }
             } finally {
                 client.close()
@@ -51,7 +51,7 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
         } else {
             // 只有 accessToken → 本地检查 JWT 是否过期
             if (isJwtExpired(settings.accessToken)) {
-                tryDesktopRefreshOrNotify(settings, project)
+                notifyRefreshFailure(settings, project)
             }
         }
     }
@@ -63,11 +63,6 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
     /**
      * 尝试 desktop 端点刷新。成功更新 [AppSettings] 并返回 true，否则返回 false。
      */
-    private fun tryDesktopRefreshOrNotify(settings: AppSettings, project: Project) {
-        if (tryDesktopRefresh(settings)) return
-        notifyTokenExpired(project)
-    }
-
     private fun tryDesktopRefresh(settings: AppSettings): Boolean {
         if (settings.accessToken.isBlank()) return false
         return try {
@@ -94,8 +89,23 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
     }
 
     // ========================================================================
-    //  通知
+    //  通知 — 区分服务端不可达 vs Token 无效
     // ========================================================================
+
+    /**
+     * 刷新失败后的通知处理：先探测服务端连通性，再决定报什么错。
+     */
+    private fun notifyRefreshFailure(settings: AppSettings, project: Project) {
+        if (tryDesktopRefresh(settings)) return
+
+        if (isServerReachable(settings.serverUrl)) {
+            // 服务端可达但刷新失败 → Token 问题
+            notifyTokenExpired(project)
+        } else {
+            // 服务端不可达 → 网络问题
+            notifyServerUnreachable(project, settings.serverUrl)
+        }
+    }
 
     private fun notifyTokenExpired(project: Project) {
         Notifications.Bus.notify(
@@ -107,6 +117,46 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
             ),
             project
         )
+    }
+
+    private fun notifyServerUnreachable(project: Project, serverUrl: String) {
+        Notifications.Bus.notify(
+            Notification(
+                "Hoppscotch Sync",
+                I18n.message("notification.serverUnreachable.title"),
+                I18n.message("notification.serverUnreachable.content", serverUrl),
+                NotificationType.WARNING
+            ),
+            project
+        )
+    }
+
+    // ========================================================================
+    //  连通性检测
+    // ========================================================================
+
+    /**
+     * 检测 Hoppscotch 服务端是否可达（不依赖 HTTP 响应状态码，只检查 TCP 连接）。
+     */
+    private fun isServerReachable(serverUrl: String): Boolean {
+        return try {
+            val uri = URI.create(serverUrl)
+            val host = uri.host ?: return false
+            val port = when {
+                uri.port > 0 -> uri.port
+                uri.scheme == "https" -> 443
+                else -> 80
+            }
+            val socket = java.net.Socket()
+            try {
+                socket.connect(java.net.InetSocketAddress(host, port), 5000)
+                true
+            } finally {
+                socket.close()
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     companion object {

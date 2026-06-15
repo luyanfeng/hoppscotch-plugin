@@ -1,6 +1,5 @@
 package com.hoppscotch.sync.settings
 
-import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.JBColor
@@ -68,11 +67,6 @@ class AppSettingsConfigurable : Configurable {
                     }.also { verifyButton = it.component }
                     cell(verifyStatusLabel)
                 }
-                row {
-                    link(I18n.message("settings.howToTokens")) {
-                        BrowserUtil.browse("https://docs.hoppscotch.io/documentation/features/authentication")
-    }
-}
             }
             group(I18n.message("settings.group.language")) {
                 row(I18n.message("settings.language")) {
