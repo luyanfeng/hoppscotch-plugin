@@ -95,7 +95,7 @@ class SpringControllerParser(private val project: Project) {
             allModules.toList()
         }
         if (modules.isEmpty()) {
-            if (moduleNames != null) return emptyList()
+            // 模块按名过滤为空时，回退到项目级扫描（兼容单项目 / 模块名不匹配场景）
             return scanProjectLevel()
         }
 
@@ -162,9 +162,10 @@ class SpringControllerParser(private val project: Project) {
             }
         }
 
+        // 只要没有找到任何被注解的类就返回 null，触发 scanByFileTraversal 降级。
+        // 不要依赖 hasAnyAnnotationClass 判断：注解类在 classpath 中可解析但
+        // AnnotatedElementsSearch 因索引不完整返回空集时，仍需降级文件遍历。
         return result.takeIf { it.isNotEmpty() }
-            // 当两种注解都未找到时返回 null 触发降级
-            ?: if (hasAnyAnnotationClass(scope)) result else null
     }
 
     /**
@@ -186,12 +187,23 @@ class SpringControllerParser(private val project: Project) {
         val fileIndex = FileIndexFacade.getInstance(project)
 
         // 收集作用域内的所有 Java 文件
-        val javaFiles = FileTypeIndex.getFiles(
+        val files = FileTypeIndex.getFiles(
             com.intellij.ide.highlighter.JavaFileType.INSTANCE,
             scope
-        )
+        ).toMutableSet()
 
-        for (vf in javaFiles) {
+        // 尝试也搜索 Kotlin 文件（Kotlin 插件可能未安装，用反射安全获取）
+        try {
+            val ktFileTypeClass = Class.forName("org.jetbrains.kotlin.psi.KotlinFileType")
+            val ktInstance = ktFileTypeClass.getField("INSTANCE").get(null)
+            if (ktInstance is com.intellij.openapi.fileTypes.FileType) {
+                files.addAll(FileTypeIndex.getFiles(ktInstance, scope))
+            }
+        } catch (_: Exception) {
+            // Kotlin 插件未安装，忽略
+        }
+
+        for (vf in files) {
             if (!fileIndex.isInSourceContent(vf)) continue
 
             val psiFile = PsiManager.getInstance(project).findFile(vf) ?: continue
