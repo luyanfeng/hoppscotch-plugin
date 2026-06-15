@@ -53,16 +53,25 @@ intellijPlatform {
 version = "1.2.1"
         description = """
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
+            <p><b>⚠️ Spring Boot (Java) only.</b></p>
             <p>Features:</p>
             <ul>
                 <li>Parse @RestController and @Controller classes in your project</li>
                 <li>Extract all HTTP endpoints (@RequestMapping, @GetMapping, @PostMapping, etc.)</li>
-                <li>Sync endpoints to Hoppscotch self-hosted collections</li>
-                <li>Tool window for easy management</li>
+                <li>Parse path/query/body/header parameters with JSON skeleton preview</li>
+                <li>Incremental sync to Hoppscotch via GraphQL API — skip existing, only create new</li>
+                <li>Dual-hash sync status tracking: SYNCED (green), MODIFIED (blue), UNSYNCED (white)</li>
+                <li>Multi-project/module support in a single IDEA window</li>
+                <li>Selective sync with checkbox — search filters auto-select visible rows</li>
+                <li>Collection tree picker to choose target folder before sync</li>
+                <li>Auto token refresh with access_token + refresh_token dual auth</li>
+                <li>Adjustable table columns (show/hide, reorder, resize with session persistence)</li>
+                <li>Bilingual UI (English / 中文) with instant switch</li>
             </ul>
         """.trimIndent()
             changeNotes = """
             <ul>
+                <li><b>1.2.1</b> Fix: 网络不通时区分「Token 过期」和「服务器不可达」; 移除设置中的帮助链接</li>
                 <li><b>1.2.0</b> 新增: 物理列显隐; 标题列合并入路径列; 接口列显示 @Api tag; 列宽跨会话持久化; 列显隐恢复宽度; 支持以项目及类结构生成子集合</li>
                 <li><b>1.1.0</b> 新增: 标题列; 支持 @ApiOperation 标题; 同步状态持久化 serverId</li>
                 <li><b>1.0.0</b> Initial release</li>
@@ -74,9 +83,16 @@ version = "1.2.1"
         }
         vendor {
             name = "Hoppscotch Sync"
-            url = "https://github.com/hoppscotch/hoppscotch"
+            email = "luyanfeng001001@gmail.com"
+            url = "https://github.com/luyanfeng/hoppscotch-plugin"
         }
     }
+    pluginVerification {
+        ides {
+            ide(IntelliJPlatformType.IntellijIdeaUltimate, "2026.1")
+        }
+    }
+
     signing {
         certificateChain = System.getenv("CERTIFICATE_CHAIN") ?: ""
         privateKey = System.getenv("PRIVATE_KEY") ?: ""
@@ -98,8 +114,5 @@ tasks {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
         }
     }
-    patchPluginXml {
-        sinceBuild = "261"
-        untilBuild = "262.*"
-    }
+
 }
