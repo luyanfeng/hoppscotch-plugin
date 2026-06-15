@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-            version = "1.2.0"
+            version = "1.2.1"
 
 repositories {
     mavenCentral()
@@ -50,7 +50,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-version = "1.2.0"
+version = "1.2.1"
         description = """
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
             <p>Features:</p>

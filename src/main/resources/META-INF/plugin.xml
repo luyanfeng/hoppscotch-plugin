@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.hoppscotch.sync</id>
     <name>Hoppscotch Sync</name>
-    <version>1.0.0</version>
+    <version>1.2.1</version>
     <vendor email="support@hoppscotch.io" url="https://github.com/hoppscotch/hoppscotch">
         Hoppscotch Sync
     </vendor>
