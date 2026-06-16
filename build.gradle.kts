@@ -52,6 +52,7 @@ intellijPlatform {
             name = "Hoppscotch Sync"
 version = "1.2.1"
         description = """
+            <h3>English</h3>
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
             <p><b>⚠️ Spring Boot (Java) only.</b></p>
             <p>Features:</p>
@@ -67,6 +68,23 @@ version = "1.2.1"
                 <li>Auto token refresh with access_token + refresh_token dual auth</li>
                 <li>Adjustable table columns (show/hide, reorder, resize with session persistence)</li>
                 <li>Bilingual UI (English / 中文) with instant switch</li>
+            </ul>
+            <hr>
+            <h3>中文</h3>
+            <p>将 Spring Boot REST API 端点同步到 Hoppscotch 自托管实例。</p>
+            <p><b>⚠️ 仅支持 Spring Boot (Java) 项目。</b></p>
+            <p>功能：</p>
+            <ul>
+                <li>扫描 @RestController / @Controller 类，提取所有 HTTP 端点</li>
+                <li>解析路径/查询/请求体/请求头参数，展示 JSON 骨架预览</li>
+                <li>通过 GraphQL API 增量同步到 Hoppscotch — 跳过已存在，仅创建新增</li>
+                <li>双 Hash 同步状态追踪：🟢 已同步 / 🔵 已修改 / ⬜ 未同步</li>
+                <li>单窗口多项目/多模块支持</li>
+                <li>复选框选择性同步，搜索过滤自动勾选可见行</li>
+                <li>同步前弹出集合树选择器选择目标文件夹</li>
+                <li>access_token + refresh_token 双 Token 认证，自动续期</li>
+                <li>表格列显隐 / 排序 / 拖拽调整宽度，重启后保留</li>
+                <li>中英文界面即时切换</li>
             </ul>
         """.trimIndent()
             changeNotes = """
