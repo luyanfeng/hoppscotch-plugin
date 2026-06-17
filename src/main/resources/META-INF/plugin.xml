@@ -47,6 +47,7 @@
                 id="Hoppscotch Sync"
                 anchor="right"
                 secondary="true"
+                doNotActivateOnStart="false"
                 factoryClass="com.hoppscotch.sync.toolwindow.HoppscotchSyncToolWindowFactory"/>
 
         <applicationService

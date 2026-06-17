@@ -1,6 +1,10 @@
 # Hoppscotch Sync Plugin
 
+[![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/hoppscotch-sync?color=blue&label=Marketplace)](https://plugins.jetbrains.com/plugin/hoppscotch-sync)
+
 将 Spring Boot Controller 的 REST API 端点同步到 [Hoppscotch Self-Hosted](https://github.com/hoppscotch/hoppscotch) 实例的 IntelliJ IDEA 插件。
+
+> ✅ 已发布到 JetBrains Marketplace，在 IDEA 的 Plugins → Marketplace 中搜索 `Hoppscotch Sync` 即可安装。
 
 > ⚠️ 仅支持 Spring Boot (Java) 项目。
 > 此文及项目由ai生成，本项目只自用，出于分享目的开源。并不考虑持久维护（能力和精力有限），更多的是希望现阶段可以给那些能力和精力更有限的朋友提供个能用的选择。
@@ -35,6 +39,12 @@ gradle buildPlugin
 
 ### 安装
 
+**Marketplace（推荐）**：
+1. IntelliJ IDEA → Settings → Plugins → Marketplace
+2. 搜索 `Hoppscotch Sync`
+3. 点击 Install → 重启 IDE
+
+**本地安装**：
 1. IntelliJ IDEA → Settings → Plugins → ⚙ → Install Plugin from Disk
 2. 选择 `build/distributions/hoppscotch-sync-plugin-1.0.0.zip`
 3. 重启 IDE
