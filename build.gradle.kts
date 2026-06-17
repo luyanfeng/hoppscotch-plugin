@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-            version = "1.2.2"
+            version = "1.2.3"
 
 repositories {
     mavenCentral()
@@ -50,7 +50,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-version = "1.2.2"
+            version = "1.2.3"
         description = """
             <h3>English</h3>
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
@@ -89,6 +89,8 @@ version = "1.2.2"
         """.trimIndent()
             changeNotes = """
             <ul>
+                <li><b>1.2.3</b> 优化: 集合树查询改为一次 GraphQL 嵌套请求，消除 N+1 懒加载和 Thread.sleep(300)</li>
+                <li><b>1.2.2</b> 优化: 同步状态检查新增 target 模式；集合选择器支持 target 路径显示</li>
                 <li><b>1.2.1</b> Fix: 网络不通时区分「Token 过期」和「服务器不可达」; 移除设置中的帮助链接</li>
                 <li><b>1.2.0</b> 新增: 物理列显隐; 标题列合并入路径列; 接口列显示 @Api tag; 列宽跨会话持久化; 列显隐恢复宽度; 支持以项目及类结构生成子集合</li>
                 <li><b>1.1.0</b> 新增: 标题列; 支持 @ApiOperation 标题; 同步状态持久化 serverId</li>
