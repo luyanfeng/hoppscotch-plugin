@@ -62,13 +62,147 @@ class HoppscotchClient(
         return refreshAccessToken()
     }
 
+    // ====================================================================
+    //  Collection Tree API — 一次性获取完整集合树
+    // ====================================================================
+
+    /**
+     * 构建嵌套的 GraphQL 字段片段。
+     * @param remainingDepth 剩余的 [childrenREST] 嵌套层数（0 表示不再嵌套子集合）
+     */
+    private fun buildChildFields(remainingDepth: Int): String = buildString {
+        appendLine("id")
+        appendLine("title")
+        appendLine("requests(take: 99999) {")
+        appendLine("  id")
+        appendLine("  title")
+        appendLine("  request")
+        appendLine("}")
+        if (remainingDepth > 0) {
+            appendLine("childrenREST(take: 99999) {")
+            append(buildChildFields(remainingDepth - 1).prependIndent("  "))
+            appendLine("}")
+        }
+    }
+
+    /**
+     * 从 GraphQL 响应中的 JsonArray 递归解析为 [CollectionTreeNode] 列表。
+     */
+    private fun parseTreeNodes(jsonArray: JsonArray): List<CollectionTreeNode> {
+        return jsonArray.map { element ->
+            val obj = element.asJsonObject
+            CollectionTreeNode(
+                id = obj.get("id").asString,
+                title = obj.get("title").asString,
+                children = obj.get("childrenREST")?.asJsonArray
+                    ?.let { parseTreeNodes(it) } ?: emptyList(),
+                requests = obj.get("requests")?.asJsonArray
+                    ?.map { reqObj ->
+                        val req = reqObj.asJsonObject
+                        RequestInfo(
+                            id = req.get("id").asString,
+                            title = req.get("title").asString,
+                            request = req.get("request")?.asString ?: ""
+                        )
+                    } ?: emptyList()
+            )
+        }
+    }
+
+    /**
+     * 一次性获取完整的根级 REST 集合树（含所有层级的子集合和请求）。
+     * 替代逐层 [listCollections] + [listChildCollections] 的 N+1 遍历。
+     */
+    fun getFullCollectionTree(): Result<List<CollectionTreeNode>> {
+        val childFields = buildChildFields(TREE_DEPTH)
+        val query = """
+            query GetFullCollectionTree {
+                rootRESTUserCollections(take: 99999) {
+                    $childFields
+                }
+            }
+        """.trimIndent()
+
+        val body = buildMap<String, Any> {
+            put("query", query)
+        }
+
+        LogUtil.stdout { "[HS-API] 查询完整集合树 (depth=$TREE_DEPTH)"}
+        return executeWithRefresh(body, "rootRESTUserCollections") { data ->
+            if (data.isJsonNull) emptyList()
+            else parseTreeNodes(data.asJsonArray)
+        }
+    }
+
+    /**
+     * 一次性获取指定父集合下的完整子集合树（含所有层级的子集合和请求）。
+     * @param parentId 父集合 ID
+     */
+    fun getChildCollectionTree(parentId: String): Result<List<CollectionTreeNode>> {
+        val childFields = buildChildFields(TREE_DEPTH)
+        val query = """
+            query GetChildCollectionTree {
+                userCollection(userCollectionID: "$parentId") {
+                    childrenREST(take: 99999) {
+                        $childFields
+                    }
+                }
+            }
+        """.trimIndent()
+
+        val body = buildMap<String, Any> {
+            put("query", query)
+        }
+
+        LogUtil.stdout { "[HS-API] 查询父集合 [$parentId] 的子集合树 (depth=$TREE_DEPTH)"}
+        return executeWithRefresh(body, "userCollection") { data ->
+            val children = data.asJsonObject.get("childrenREST")
+            if (children == null || children.isJsonNull) emptyList()
+            else parseTreeNodes(children.asJsonArray)
+        }
+    }
+
+    /**
+     * 在 [CollectionTreeNode] 树中查找标题匹配的集合，递归收集其下所有请求标题。
+     */
+    private fun collectTitlesFromTree(
+        nodes: List<CollectionTreeNode>,
+        expectedTitles: Set<String>,
+        result: MutableSet<String>
+    ) {
+        for (node in nodes) {
+            if (node.title in expectedTitles) {
+                result.addAll(node.collectAllRequestTitles())
+                // collectAllRequestTitles 已递归包含所有子孙节点，无需继续下沉
+            } else {
+                collectTitlesFromTree(node.children, expectedTitles, result)
+            }
+        }
+    }
+
+    /**
+     * 在 [CollectionTreeNode] 树中查找标题匹配的集合，递归收集其下所有 [RequestInfo]。
+     */
+    private fun collectInfosFromTree(
+        nodes: List<CollectionTreeNode>,
+        expectedTitles: Set<String>,
+        result: MutableList<RequestInfo>
+    ) {
+        for (node in nodes) {
+            if (node.title in expectedTitles) {
+                result.addAll(node.collectAllRequestInfos())
+            } else {
+                collectInfosFromTree(node.children, expectedTitles, result)
+            }
+        }
+    }
+
     /**
      * 仅获取指定标题集合对应的请求标题。
-     * 先获取指定层级（根级或 target 父集合下）的集合，按标题匹配后只遍历匹配的集合及其子集合。
-     * 用于优化"检查同步状态"时只查询选中项目的数据。
+     * 通过一次 GraphQL 查询获取完整集合树（含请求），然后内存中匹配遍历。
      *
      * @param expectedTitles 期望匹配的集合标题
-     * @param parentCollectionId 如果指定，则在该父集合的子集合中搜索（target 模式）；否则搜索根集合
+     * @param parentCollectionId 如果指定，则在该父集合的子集合中搜索；否则搜索根集合
      */
     fun listRequestTitlesForCollections(
         expectedTitles: Set<String>,
@@ -76,52 +210,28 @@ class HoppscotchClient(
     ): Result<Set<String>> {
         if (expectedTitles.isEmpty()) return Result.success(emptySet())
 
-        val collections = if (parentCollectionId != null) {
-            LogUtil.stdout { "[HS-API] 查询 target 集合 [$parentCollectionId] 下的子集合"}
-            listChildCollections(parentCollectionId).getOrNull()
-                ?: return Result.failure(HoppscotchException("获取 target 子集合列表失败"))
+        val tree = if (parentCollectionId != null) {
+            LogUtil.stdout { "[HS-API] 通过集合树查询 target [$parentCollectionId] 下的请求标题"}
+            getChildCollectionTree(parentCollectionId).getOrNull()
+                ?: return Result.failure(HoppscotchException("获取 target 子集合树失败"))
         } else {
-            listCollections().getOrNull()
-                ?: return Result.failure(HoppscotchException("获取集合列表失败"))
+            LogUtil.stdout { "[HS-API] 通过集合树查询根级请求标题"}
+            getFullCollectionTree().getOrNull()
+                ?: return Result.failure(HoppscotchException("获取集合树失败"))
         }
 
-        LogUtil.stdout { "[HS-API] 服务端${if (parentCollectionId != null) "子" else "根"}集合数量: ${collections.size}"}
-        collections.forEach { coll ->
-            val matched = if (coll.title in expectedTitles) "✓ 匹配" else "✗ 不匹配"
-            LogUtil.stdout { "[HS-API]   集合: [${coll.title}] (id: ${coll.id}) $matched"}
-        }
-
+        LogUtil.stdout { "[HS-API] 集合树加载成功，开始匹配标题: $expectedTitles"}
         val allTitles = mutableSetOf<String>()
-
-        fun traverseCollection(collectionId: String) {
-            val titles = listRequests(collectionId).getOrNull()
-                ?.map { it.title }
-                ?.toSet() ?: emptySet()
-            allTitles.addAll(titles)
-
-            Thread.sleep(300)
-
-            val children = listChildCollections(collectionId).getOrNull() ?: emptyList()
-            for (child in children) {
-                traverseCollection(child.id)
-                Thread.sleep(300)
-            }
-        }
-
-        for (coll in collections) {
-            if (coll.title in expectedTitles) {
-                traverseCollection(coll.id)
-            }
-            Thread.sleep(300)
-        }
+        collectTitlesFromTree(tree, expectedTitles, allTitles)
+        LogUtil.stdout { "[HS-API] 匹配完成，共找到 ${allTitles.size} 个请求标题"}
         return Result.success(allTitles)
     }
 
     /**
      * 查询与 [expectedTitles] 标题匹配的集合下的所有请求信息（含完整的 request JSON）。
-     * 与 [listRequestTitlesForCollections] 逻辑相同，但返回完整的 [RequestInfo]。
+     * 通过一次 GraphQL 查询获取完整集合树（含请求），然后内存中匹配遍历。
      *
-     * @param expectedTitles 目标集合标题集合（匹配成功的集合的所有请求都会被收集）
+     * @param expectedTitles 目标集合标题集合
      * @param parentCollectionId 限定搜索的父集合 ID；null 表示从根集合开始
      * @return 匹配到的所有 [RequestInfo] 列表
      */
@@ -131,33 +241,20 @@ class HoppscotchClient(
     ): Result<List<RequestInfo>> {
         if (expectedTitles.isEmpty()) return Result.success(emptyList())
 
-        val collections = if (parentCollectionId != null) {
-            listChildCollections(parentCollectionId).getOrNull()
-                ?: return Result.failure(HoppscotchException("获取 target 子集合列表失败"))
+        val tree = if (parentCollectionId != null) {
+            LogUtil.stdout { "[HS-API] 通过集合树查询 target [$parentCollectionId] 下的请求信息"}
+            getChildCollectionTree(parentCollectionId).getOrNull()
+                ?: return Result.failure(HoppscotchException("获取 target 子集合树失败"))
         } else {
-            listCollections().getOrNull()
-                ?: return Result.failure(HoppscotchException("获取集合列表失败"))
+            LogUtil.stdout { "[HS-API] 通过集合树查询根级请求信息"}
+            getFullCollectionTree().getOrNull()
+                ?: return Result.failure(HoppscotchException("获取集合树失败"))
         }
 
+        LogUtil.stdout { "[HS-API] 集合树加载成功，开始匹配标题: $expectedTitles"}
         val allRequests = mutableListOf<RequestInfo>()
-
-        fun traverseCollection(collectionId: String) {
-            val requests = listRequests(collectionId).getOrNull() ?: emptyList()
-            allRequests.addAll(requests)
-            Thread.sleep(300)
-            val children = listChildCollections(collectionId).getOrNull() ?: emptyList()
-            for (child in children) {
-                traverseCollection(child.id)
-                Thread.sleep(300)
-            }
-        }
-
-        for (coll in collections) {
-            if (coll.title in expectedTitles) {
-                traverseCollection(coll.id)
-            }
-            Thread.sleep(300)
-        }
+        collectInfosFromTree(tree, expectedTitles, allRequests)
+        LogUtil.stdout { "[HS-API] 匹配完成，共找到 ${allRequests.size} 个请求信息"}
         return Result.success(allRequests)
     }
 
@@ -592,6 +689,9 @@ class HoppscotchClient(
     }
 
     companion object {
+        /** 集合树递归查询深度（`childrenREST` 嵌套层数）。6 层 ≈ 7 级深度，覆盖实际所有场景。 */
+        private const val TREE_DEPTH = 6
+
         /**
          * 验证 token 是否有效。
          * 使用 `sendAsync().orTimeout()` 确保即使底层网络挂起也能触发超时。

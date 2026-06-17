@@ -51,6 +51,45 @@ data class CollectionInfo(
     val title: String
 )
 
+/**
+ * 集合树节点，包含子集合和请求列表。
+ * 用于 [HoppscotchClient.getFullCollectionTree] / [HoppscotchClient.getChildCollectionTree] 的
+ * 一次性树查询结果。
+ */
+data class CollectionTreeNode(
+    val id: String,
+    val title: String,
+    val children: List<CollectionTreeNode> = emptyList(),
+    val requests: List<RequestInfo> = emptyList()
+) {
+    /** 递归收集该节点及其所有子节点下的所有集合 ID */
+    fun collectAllIds(): Set<String> {
+        val ids = mutableSetOf(id)
+        for (child in children) {
+            ids.addAll(child.collectAllIds())
+        }
+        return ids
+    }
+
+    /** 递归收集该节点及其所有子节点下的所有请求标题 */
+    fun collectAllRequestTitles(): Set<String> {
+        val titles = requests.map { it.title }.toMutableSet()
+        for (child in children) {
+            titles.addAll(child.collectAllRequestTitles())
+        }
+        return titles
+    }
+
+    /** 递归收集该节点及其所有子节点下的所有 [RequestInfo] */
+    fun collectAllRequestInfos(): List<RequestInfo> {
+        val infos = requests.toMutableList()
+        for (child in children) {
+            infos.addAll(child.collectAllRequestInfos())
+        }
+        return infos
+    }
+}
+
 data class RequestInfo(
     val id: String,
     val title: String,

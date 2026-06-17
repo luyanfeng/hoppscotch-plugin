@@ -6,6 +6,7 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBScrollPane
 import com.hoppscotch.sync.hoppscotch.HoppscotchClient
+import com.hoppscotch.sync.model.CollectionTreeNode
 import com.hoppscotch.sync.settings.AppSettings
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -20,6 +21,8 @@ import javax.swing.tree.TreeSelectionModel
 
 /**
  * 集合选择对话框，展示 Hoppscotch 集合树并让用户选择一个目标父集合。
+ *
+ * 一次 GraphQL 查询获取完整集合树（含所有层级的子集合），禁用懒加载。
  *
  * 使用方法：
  *   val dialog = CollectionPickerDialog(client)
@@ -68,10 +71,8 @@ class CollectionPickerDialog(
                     val path = getPathForLocation(e.x, e.y) ?: return
                     val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
                     if (node.isLeaf) return
-                    // 计算展开箭头的大致宽度（showsRootHandles 为 true 时约 20px）
                     val rowBounds = getRowBounds(getRowForPath(path)) ?: return
                     val handleWidth = 20
-                    // 只在非箭头区域触发展开/合拢，避免与默认箭头点击行为冲突
                     if (e.x >= rowBounds.x + handleWidth) {
                         if (isExpanded(path)) collapsePath(path) else expandPath(path)
                     }
@@ -79,19 +80,6 @@ class CollectionPickerDialog(
             })
 
             addTreeSelectionListener { onTreeSelection() }
-            addTreeWillExpandListener(object : javax.swing.event.TreeWillExpandListener {
-                override fun treeWillExpand(event: javax.swing.event.TreeExpansionEvent) {
-                    val node = event.path.lastPathComponent as DefaultMutableTreeNode
-                    val userObj = node.userObject
-                    if (userObj is CollectionTreeItem && !userObj.loaded) {
-                        loadChildren(node, userObj)
-                    }
-                }
-
-                override fun treeWillCollapse(event: javax.swing.event.TreeExpansionEvent) {
-                    // allowed
-                }
-            })
             selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
         }
 
@@ -127,7 +115,7 @@ class CollectionPickerDialog(
         // 初始化 DialogWrapper（会在内部调用 createCenterPanel，此时组件已就绪）
         init()
 
-        loadRoots()
+        loadFullTree()
     }
 
     override fun createCenterPanel(): JComponent {
@@ -145,7 +133,6 @@ class CollectionPickerDialog(
     }
 
     override fun doOKAction() {
-        // 选择为空时回退到根级同步（不做持久化，清空之前的设置）
         AppSettings.getInstance().apply {
             targetCollectionId = selectedId
             targetCollectionPath = selectedPath
@@ -155,37 +142,32 @@ class CollectionPickerDialog(
     }
 
     /**
-     * 加载根级集合。
+     * 一次性加载完整集合树。
+     * 使用 [HoppscotchClient.getFullCollectionTree] 一次 GraphQL 查询获取所有层级的集合。
      */
-    private fun loadRoots() {
+    private fun loadFullTree() {
         loadingLabel.isVisible = true
         tree.isEnabled = false
 
         val task = object : Task.Backgroundable(null, "Loading collections...", false) {
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                val result = client.listCollections(1000)
+                val result = client.getFullCollectionTree()
                 SwingUtilities.invokeLater {
                     loadingLabel.isVisible = false
                     tree.isEnabled = true
 
-                    result.onSuccess { collections ->
+                    result.onSuccess { roots ->
                         rootNode.removeAllChildren()
-                        for (col in collections) {
-                            val item = CollectionTreeItem(col.id, col.title, false)
-                            val node = DefaultMutableTreeNode(item)
-                            // 添加占位子节点以显示展开箭头
-                            node.add(DefaultMutableTreeNode("Loading..."))
-                            rootNode.add(node)
+                        for (root in roots) {
+                            buildTreeNode(rootNode, root)
                         }
                         treeModel.reload()
-                        // 展开根节点
                         if (rootNode.childCount > 0) {
                             tree.expandPath(TreePath(arrayOf(rootNode)))
                         }
-                        // 如果之前有选中，尝试恢复高亮
                         restoreSelection()
                     }.onFailure { e ->
-                        log.warn("Failed to load root collections", e)
+                        log.warn("Failed to load collection tree", e)
                         pathLabel.text = "Error: ${e.message}"
                     }
                 }
@@ -195,34 +177,17 @@ class CollectionPickerDialog(
     }
 
     /**
-     * 懒加载指定节点的子集合。
+     * 递归将 [CollectionTreeNode] 构建为 [DefaultMutableTreeNode] 并添加到 [parent] 下。
      */
-    private fun loadChildren(parentNode: DefaultMutableTreeNode, parentItem: CollectionTreeItem) {
-        parentItem.loaded = true
-        // 移除占位节点
-        parentNode.removeAllChildren()
-
-        val task = object : Task.Backgroundable(null, "Loading children...", false) {
-            override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                val result = client.listChildCollections(parentItem.id, 1000)
-                SwingUtilities.invokeLater {
-                    result.onSuccess { children ->
-                        for (child in children) {
-                            val childItem = CollectionTreeItem(child.id, child.title, false)
-                            val childNode = DefaultMutableTreeNode(childItem)
-                            childNode.add(DefaultMutableTreeNode("Loading..."))
-                            parentNode.add(childNode)
-                        }
-                        treeModel.reload(parentNode)
-                        restoreSelection()
-                    }.onFailure { e ->
-                        log.warn("Failed to load children for ${parentItem.title}", e)
-                        pathLabel.text = "Error loading children: ${e.message}"
-                    }
-                }
-            }
+    private fun buildTreeNode(
+        parent: DefaultMutableTreeNode,
+        treeNode: CollectionTreeNode
+    ) {
+        val node = DefaultMutableTreeNode(CollectionTreeItem(treeNode.id, treeNode.title))
+        for (child in treeNode.children) {
+            buildTreeNode(node, child)
         }
-        ProgressManager.getInstance().run(task)
+        parent.add(node)
     }
 
     /**
@@ -272,7 +237,6 @@ class CollectionPickerDialog(
      */
     private fun restoreSelection() {
         if (selectedId.isBlank()) return
-        // 遍历树查找匹配的节点
         val root = rootNode
         val enum: Enumeration<*> = root.depthFirstEnumeration()
         while (enum.hasMoreElements()) {
@@ -287,7 +251,6 @@ class CollectionPickerDialog(
                 }
             }
         }
-        // 没找到，清除失效的持久化选中
         if (selectedId.isNotBlank()) {
             log.warn("Saved target collection $selectedId not found in tree, clearing")
             selectedId = ""
@@ -297,12 +260,11 @@ class CollectionPickerDialog(
     }
 
     /**
-     * 树节点中存储的数据。loaded 表示是否已加载子节点（用于懒加载）。
+     * 树节点中存储的数据。title 作为 JTree 显示文本。
      */
-    data class CollectionTreeItem(
+    private data class CollectionTreeItem(
         val id: String,
-        val title: String,
-        var loaded: Boolean = false
+        val title: String
     ) {
         override fun toString(): String = title
     }
