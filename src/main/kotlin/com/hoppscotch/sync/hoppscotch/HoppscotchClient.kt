@@ -689,8 +689,8 @@ class HoppscotchClient(
     }
 
     companion object {
-        /** 集合树递归查询深度（`childrenREST` 嵌套层数）。6 层 ≈ 7 级深度，覆盖实际所有场景。 */
-        private const val TREE_DEPTH = 6
+        /** 集合树递归查询深度（`childrenREST` 嵌套层数）。降低以适配后端 GraphQL 复杂度限制（最大 50）。 */
+        private const val TREE_DEPTH = 4
 
         /**
          * 验证 token 是否有效。
