@@ -3,6 +3,7 @@ package com.hoppscotch.sync.toolwindow
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModuleManager
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -27,6 +28,7 @@ import com.hoppscotch.sync.model.computeEndpointKey
 import com.hoppscotch.sync.psi.SpringControllerParser
 import com.hoppscotch.sync.service.SyncService
 import com.hoppscotch.sync.settings.AppSettings
+import com.hoppscotch.sync.settings.AppSettingsConfigurable
 import com.hoppscotch.sync.util.I18n
 import com.hoppscotch.sync.util.LogUtil
 import java.awt.BorderLayout
@@ -459,6 +461,12 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(Box.createHorizontalStrut(8))
             add(refreshButton)
             add(Box.createHorizontalGlue())
+            val settingsButton = JButton(I18n.message("button.settings")).apply {
+                addActionListener {
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, AppSettingsConfigurable::class.java)
+                }
+            }
+            add(settingsButton)
         }
 
         // ── Selection toolbar ──
@@ -966,7 +974,10 @@ class HoppscotchSyncPanel(private val project: Project) {
                 indicator.text = I18n.message("progress.indicator.scanning")
 
                 // 1. Controller 扫描
+                var t = System.currentTimeMillis()
                 val (groups, error) = scanControllersSafe()
+                val scanCost = System.currentTimeMillis() - t
+                LogUtil.info(log) { "[耗时] Controller 扫描: ${scanCost}ms" }
 
                 // 更新耗时（不受错误影响，始终显示）
                 val elapsed = System.currentTimeMillis() - startTime
@@ -993,13 +1004,19 @@ class HoppscotchSyncPanel(private val project: Project) {
                 }
 
                 // 2. 服务端同步状态检查（与 onCheckSyncStatus 共用逻辑）
+                t = System.currentTimeMillis()
                 val serverStatuses = performServerCheck(groups ?: emptyList(), indicator)
+                val checkCost = System.currentTimeMillis() - t
+                LogUtil.info(log) { "[耗时] 服务端同步状态检查: ${checkCost}ms" }
 
                 // 3. 统一更新 UI
                 SwingUtilities.invokeLater {
                     scannedGroups = groups ?: emptyList()
-                    searchField.text = ""  // 刷新时重置过滤
+                    // 刷新后重新应用过滤（保留用户输入的过滤串）
+                    t = System.currentTimeMillis()
                     refreshTable()
+                    val tableCost = System.currentTimeMillis() - t
+                    LogUtil.info(log) { "[耗时] 刷新表格: ${tableCost}ms" }
                     // 用服务端校验结果覆盖同步状态
                     if (serverStatuses != null) {
                         for (i in 0 until minOf(serverStatuses.size, rowSyncStatus.size)) {
@@ -1288,7 +1305,9 @@ class HoppscotchSyncPanel(private val project: Project) {
             }
         )
         if (settings.refreshToken.isNotBlank()) {
+            var t = System.currentTimeMillis()
             client.tryRefreshSession()
+            LogUtil.info(log) { "[耗时] Token 刷新: ${System.currentTimeMillis() - t}ms" }
         }
 
         // 从扫描结果构建端点/分组列表
@@ -1310,14 +1329,11 @@ class HoppscotchSyncPanel(private val project: Project) {
         LogUtil.info(log) { "期望集合标题: ${expectedCollectionTitles.joinToString(", ")}" }
         LogUtil.info(log) { "targetCollectionId: ${settings.targetCollectionId.ifBlank { "(无)" }}" }
 
-        // 搜索所有集合层次（root + target 子集合），确保覆盖同步时选择的不同位置
-        // 同时收集请求 JSON 用于服务端修改检测
         // 使用 serverId 匹配优先，不依赖 title
         val allServerIds = mutableSetOf<String>()
         val requestById = mutableMapOf<String, RequestInfo>() // id → RequestInfo
         // method:endpoint → id 映射，用于旧数据回填（无 serverId 时）
         val methodEndpointToInfo = mutableMapOf<String, RequestInfo>()
-        val targetId = settings.targetCollectionId.ifBlank { null }
 
         fun collectRequests(infos: List<RequestInfo>) {
             for (info in infos) {
@@ -1332,37 +1348,19 @@ class HoppscotchSyncPanel(private val project: Project) {
             }
         }
 
-        // 1. 先搜索 target 子集合（如果有设置）
-        var foundInTarget = false
-        if (targetId != null) {
-            val targetResult = client.listRequestInfosForCollections(
-                expectedTitles = expectedCollectionTitles,
-                parentCollectionId = targetId
-            )
-            if (targetResult.isSuccess) {
-                val infos = targetResult.getOrThrow()
-                collectRequests(infos)
-                foundInTarget = infos.isNotEmpty()
-                LogUtil.debug(log) { "target 模式 [${settings.targetCollectionPath}] 找到 ${infos.size} 个请求（含 ${infos.count { it.request.isNotBlank() }} 个含请求体）" }
-            } else {
-                log.warn("target 模式查询失败: ${targetResult.exceptionOrNull()?.message}")
-            }
-        }
-
-        // 2. 仅在 target 未设置或 target 未找到数据时，降级到根集合搜索
-        if (targetId == null || !foundInTarget) {
-            val rootResult = client.listRequestInfosForCollections(
-                expectedTitles = expectedCollectionTitles,
-                parentCollectionId = null
-            )
-            if (rootResult.isSuccess) {
-                val infos = rootResult.getOrThrow()
-                val beforeSize = allServerIds.size
-                collectRequests(infos)
-                LogUtil.debug(log) { "根集合搜索找到 ${infos.size} 个请求（其中 ${allServerIds.size - beforeSize} 个新 id，${infos.count { it.request.isNotBlank() }} 个含请求体）" }
-            } else {
-                log.warn("根集合查询失败: ${rootResult.exceptionOrNull()?.message}")
-            }
+        // 一次查询根集合树（包含所有层级）
+        var t = System.currentTimeMillis()
+        val rootResult = client.listRequestInfosForCollections(
+            expectedTitles = expectedCollectionTitles,
+            parentCollectionId = null
+        )
+        LogUtil.info(log) { "[耗时] 查询根集合树: ${System.currentTimeMillis() - t}ms" }
+        if (rootResult.isSuccess) {
+            val infos = rootResult.getOrThrow()
+            collectRequests(infos)
+            LogUtil.debug(log) { "根集合搜索找到 ${infos.size} 个请求" }
+        } else {
+            log.warn("根集合查询失败: ${rootResult.exceptionOrNull()?.message}")
         }
 
         if (allServerIds.isEmpty()) {
@@ -1378,6 +1376,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         // 使用扫描数据判断每行同步状态，对比本地 hash + 服务端请求 hash
         val statuses = MutableList(freshEndpoints.size) { SyncStatus.UNSYNCED }
         val total = freshEndpoints.size
+        val loopT = System.currentTimeMillis()
         for (i in freshEndpoints.indices) {
             val endpoint = freshEndpoints[i]
             val group = freshGroups[i]
@@ -1473,6 +1472,7 @@ class HoppscotchSyncPanel(private val project: Project) {
             }
             LogUtil.debug(log) { "------------------------" }
         }
+        LogUtil.info(log) { "[耗时] 端点 hash 对比 (${total} 条): ${System.currentTimeMillis() - loopT}ms" }
 
         // 保存回填的 serverId
         if (hasPendingUpdates) {
