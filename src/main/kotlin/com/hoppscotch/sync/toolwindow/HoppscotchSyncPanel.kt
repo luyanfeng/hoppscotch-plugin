@@ -1333,6 +1333,7 @@ class HoppscotchSyncPanel(private val project: Project) {
         }
 
         // 1. 先搜索 target 子集合（如果有设置）
+        var foundInTarget = false
         if (targetId != null) {
             val targetResult = client.listRequestInfosForCollections(
                 expectedTitles = expectedCollectionTitles,
@@ -1341,24 +1342,27 @@ class HoppscotchSyncPanel(private val project: Project) {
             if (targetResult.isSuccess) {
                 val infos = targetResult.getOrThrow()
                 collectRequests(infos)
-                LogUtil.info(log) { "target 模式 [${settings.targetCollectionPath}] 找到 ${infos.size} 个请求（含 ${infos.count { it.request.isNotBlank() }} 个含请求体）" }
+                foundInTarget = infos.isNotEmpty()
+                LogUtil.debug(log) { "target 模式 [${settings.targetCollectionPath}] 找到 ${infos.size} 个请求（含 ${infos.count { it.request.isNotBlank() }} 个含请求体）" }
             } else {
                 log.warn("target 模式查询失败: ${targetResult.exceptionOrNull()?.message}")
             }
         }
 
-        // 2. 再搜索根集合（确保覆盖通过 SyncAction 等方式同步到根的数据）
-        val rootResult = client.listRequestInfosForCollections(
-            expectedTitles = expectedCollectionTitles,
-            parentCollectionId = null
-        )
-        if (rootResult.isSuccess) {
-            val infos = rootResult.getOrThrow()
-            val beforeSize = allServerIds.size
-            collectRequests(infos)
-            LogUtil.info(log) { "根集合搜索找到 ${infos.size} 个请求（其中 ${allServerIds.size - beforeSize} 个新 id，${infos.count { it.request.isNotBlank() }} 个含请求体）" }
-        } else {
-            log.warn("根集合查询失败: ${rootResult.exceptionOrNull()?.message}")
+        // 2. 仅在 target 未设置或 target 未找到数据时，降级到根集合搜索
+        if (targetId == null || !foundInTarget) {
+            val rootResult = client.listRequestInfosForCollections(
+                expectedTitles = expectedCollectionTitles,
+                parentCollectionId = null
+            )
+            if (rootResult.isSuccess) {
+                val infos = rootResult.getOrThrow()
+                val beforeSize = allServerIds.size
+                collectRequests(infos)
+                LogUtil.debug(log) { "根集合搜索找到 ${infos.size} 个请求（其中 ${allServerIds.size - beforeSize} 个新 id，${infos.count { it.request.isNotBlank() }} 个含请求体）" }
+            } else {
+                log.warn("根集合查询失败: ${rootResult.exceptionOrNull()?.message}")
+            }
         }
 
         if (allServerIds.isEmpty()) {
@@ -1403,14 +1407,14 @@ class HoppscotchSyncPanel(private val project: Project) {
             val serverId = syncData?.serverId
             val hasPersistedData = storedValue != null
 
-            LogUtil.info(log) { "--- 端点 [$i] 对比详情 ---" }
-            LogUtil.info(log) { "  端点 Key: $key" }
-            LogUtil.info(log) { "  本地 FullPath: ${endpoint.fullPath}" }
-            LogUtil.info(log) { "  本地 HTTP Method: ${endpoint.httpMethod.name}" }
-            LogUtil.info(log) { "  本地参数: ${endpoint.parameters.map { "${it.source.name}:${it.name}(${it.type})" }.joinToString(", ")}" }
-            LogUtil.info(log) { "  本地当前 Hash: $currentLocalHash" }
-            LogUtil.info(log) { "  持久化: ${storedValue ?: "无"}" }
-            LogUtil.info(log) { "  持久化 serverId: ${serverId ?: "无"}" }
+            LogUtil.debug(log) { "--- 端点 [$i] 对比详情 ---" }
+            LogUtil.debug(log) { "  端点 Key: $key" }
+            LogUtil.debug(log) { "  本地 FullPath: ${endpoint.fullPath}" }
+            LogUtil.debug(log) { "  本地 HTTP Method: ${endpoint.httpMethod.name}" }
+            LogUtil.debug(log) { "  本地参数: ${endpoint.parameters.map { "${it.source.name}:${it.name}(${it.type})" }.joinToString(", ")}" }
+            LogUtil.debug(log) { "  本地当前 Hash: $currentLocalHash" }
+            LogUtil.debug(log) { "  持久化: ${storedValue ?: "无"}" }
+            LogUtil.debug(log) { "  持久化 serverId: ${serverId ?: "无"}" }
 
             // ── 确定服务端请求是否存在 ──
             val serverReqInfo: RequestInfo? = if (serverId != null && serverId in allServerIds) {
@@ -1433,11 +1437,11 @@ class HoppscotchSyncPanel(private val project: Project) {
                 updatedMap[key] = HoppscotchDataConverter.buildSyncValue(
                     serverReqInfo.id, oldLocalHash, oldSrvHash
                 )
-                LogUtil.info(log) { "  ↑ 已回填 serverId: ${serverReqInfo.id}" }
+                LogUtil.debug(log) { "  ↑ 已回填 serverId: ${serverReqInfo.id}" }
                 hasPendingUpdates = true
             }
 
-            LogUtil.info(log) { "  服务端是否存在: $foundOnServer" }
+            LogUtil.debug(log) { "  服务端是否存在: $foundOnServer" }
 
             statuses[i] = if (foundOnServer) {
                 val localChanged = hasPersistedData && currentLocalHash != storedLocalHash
@@ -1449,14 +1453,14 @@ class HoppscotchSyncPanel(private val project: Project) {
                     if (serverReqJson.isNotBlank()) {
                         val currentSrvHash = HoppscotchDataConverter.computeServerRequestHashFromJson(serverReqJson)
                         serverChanged = currentSrvHash != storedSrvHash
-                        LogUtil.info(log) { "  服务端请求 Hash: 当前=$currentSrvHash, 持久化=$storedSrvHash" }
+                        LogUtil.debug(log) { "  服务端请求 Hash: 当前=$currentSrvHash, 持久化=$storedSrvHash" }
                     }
                 }
 
                 if (localChanged) {
-                    LogUtil.info(log) { "  → MODIFIED (本地 hash 改变: $storedLocalHash → $currentLocalHash)" }
+                    LogUtil.debug(log) { "  → MODIFIED (本地 hash 改变: $storedLocalHash → $currentLocalHash)" }
                 } else if (serverChanged) {
-                    LogUtil.info(log) { "  → MODIFIED (服务端请求 hash 改变)" }
+                    LogUtil.debug(log) { "  → MODIFIED (服务端请求 hash 改变)" }
                 }
 
                 when {
@@ -1464,10 +1468,10 @@ class HoppscotchSyncPanel(private val project: Project) {
                     else -> SyncStatus.SYNCED
                 }
             } else {
-                LogUtil.info(log) { "  → 状态: UNSYNCED (服务端无此请求)" }
+                LogUtil.debug(log) { "  → 状态: UNSYNCED (服务端无此请求)" }
                 SyncStatus.UNSYNCED
             }
-            LogUtil.info(log) { "------------------------" }
+            LogUtil.debug(log) { "------------------------" }
         }
 
         // 保存回填的 serverId

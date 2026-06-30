@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-            version = "1.2.4"
+            version = "1.3.0"
 
 repositories {
     mavenCentral()
@@ -50,7 +50,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-            version = "1.2.4"
+            version = "1.3.0"
         description = """
             <h3>English</h3>
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
@@ -89,6 +89,8 @@ intellijPlatform {
         """.trimIndent()
             changeNotes = """
             <ul>
+                <li><b>1.3.0</b> 新增: 服务端版本检测；请求 JSON 前置 Zod 校验；请求 Schema 升级至 v17；修复 body 序列化兼容性</li>
+                <li><b>1.2.4</b> Fix: 请求 body 序列化时 Gson 排除 null 字段导致 web 端 Zod 校验失败显示 Untitled</li>
                 <li><b>1.2.3</b> 优化: 集合树查询改为一次 GraphQL 嵌套请求，消除 N+1 懒加载和 Thread.sleep(300)</li>
                 <li><b>1.2.2</b> 优化: 同步状态检查新增 target 模式；集合选择器支持 target 路径显示</li>
                 <li><b>1.2.1</b> Fix: 网络不通时区分「Token 过期」和「服务器不可达」; 移除设置中的帮助链接</li>

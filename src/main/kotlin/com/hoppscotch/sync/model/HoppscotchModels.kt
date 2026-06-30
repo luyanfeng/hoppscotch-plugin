@@ -5,7 +5,7 @@ package com.hoppscotch.sync.model
  * https://github.com/hoppscotch/hoppscotch
  */
 data class HoppscotchRequest(
-    val v: String = "16",
+    val v: String = "17",
     val name: String,
     val method: String,
     val endpoint: String,

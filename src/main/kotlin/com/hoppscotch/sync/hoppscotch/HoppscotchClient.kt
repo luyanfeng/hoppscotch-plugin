@@ -8,6 +8,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
@@ -55,10 +56,19 @@ class HoppscotchClient(
      * 尝试用当前 refreshToken 去刷新 accessToken。
      * 如果初始未提供 accessToken，也通过此方法获取。
      *
-     * @return true 表示刷新成功，false 表示失败（token 无效等）
+     * 在发起 HTTP 刷新请求前，先本地解码 JWT 检查 accessToken 是否仍在有效期内。
+     * 若 accessToken 离到期还有超过 [TOKEN_REFRESH_THRESHOLD] 秒，跳过网络请求。
+     *
+     * @return true 表示 token 可用（已有有效 token 或刷新成功），false 表示刷新失败
      */
     fun tryRefreshSession(): Boolean {
         if (refreshToken == null) return false
+
+        // accessToken 仍在有效期且离到期超过阈值 → 跳过网络请求
+        if (currentAccessToken.isNotBlank() && !isJwtExpired(currentAccessToken, TOKEN_REFRESH_THRESHOLD)) {
+            return true
+        }
+
         return refreshAccessToken()
     }
 
@@ -684,6 +694,18 @@ class HoppscotchClient(
                 lowered.contains("not_found") && lowered.contains("cookie")
     }
 
+    // ====================================================================
+    //  Server Health Check
+    // ====================================================================
+
+    /**
+     * 探测 Hoppscotch 服务端是否可达。
+     * 委托给 [HoppscotchVersionChecker.checkServerHealth]。
+     */
+    fun checkServerHealth(): HoppscotchVersionChecker.ServerHealthResult {
+        return HoppscotchVersionChecker.checkServerHealth(serverUrl)
+    }
+
     override fun close() {
         client.close()
     }
@@ -691,6 +713,33 @@ class HoppscotchClient(
     companion object {
         /** 集合树递归查询深度（`childrenREST` 嵌套层数）。降低以适配后端 GraphQL 复杂度限制（最大 50）。 */
         private const val TREE_DEPTH = 4
+
+        /**
+         * Token 刷新提前阈值（秒）。
+         * 当 accessToken 的 JWT exp 距离当前时间不足此值时触发预刷新。
+         * 避免 token 在请求途中过期导致 401 重试。
+         */
+        private const val TOKEN_REFRESH_THRESHOLD = 300L // 5 分钟
+
+        /**
+         * 本地解码 JWT 并检查 `exp`（过期时间戳）是否已过期或在阈值内。
+         *
+         * @param token JWT token 字符串
+         * @param leewaySeconds 宽松秒数：到期前此秒数内也视为"过期"（预刷新）
+         * @return true 表示 token 已过期或即将过期
+         */
+        fun isJwtExpired(token: String, leewaySeconds: Long = 0): Boolean {
+            return try {
+                val parts = token.split(".")
+                if (parts.size != 3) return true
+                val payload = String(Base64.getUrlDecoder().decode(parts[1]))
+                val json = JsonParser.parseString(payload).asJsonObject
+                val exp = json.get("exp")?.asLong ?: return false
+                System.currentTimeMillis() / 1000 + leewaySeconds >= exp
+            } catch (_: Exception) {
+                true
+            }
+        }
 
         /**
          * 验证 token 是否有效。

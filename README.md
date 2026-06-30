@@ -20,12 +20,25 @@
 - **多模块支持** — 同一窗口中的多模块均可识别，Projects 下拉定向扫描
 - **数据缓存** — 项目选择和扫描结果自动持久化，重启 IDE 无需重新扫描
 - **中英文界面** — 设置中切换语言，即时生效
+- **服务端版本检测** — 设置面板中检测服务端可达性，展示兼容的 schema 版本
+- **请求格式校验** — 发送前自动校验 JSON 是否符合 Hoppscotch Zod schema 核心约束
 
 ## 系统要求
 
 - IntelliJ IDEA 2026.1+ (Build 261+)
 - JDK 21
 - Hoppscotch Self-Hosted 实例
+
+## 兼容性
+
+| 项目 | 版本 |
+|------|------|
+| 插件版本 | 1.2.4 |
+| 请求 Schema 版本 | v17 |
+| 支持的服务端版本 | 2025.0.0+ |
+| 支持的 Zod Schema | v17, v16 |
+
+> 插件会自动检测服务端可达性，并在设置面板中展示兼容的 schema 版本。如果服务端版本过低，请升级 Hoppscotch 后端。
 
 ## 快速开始
 
@@ -54,6 +67,8 @@ gradle buildPlugin
 1. 打开 Hoppscotch Self-Hosted 实例，从浏览器 Cookie 获取 `access_token` 和 `refresh_token`
 2. 在 IDEA 中：Settings → Tools → Hoppscotch Sync
 3. 填写 Server URL、Access Token、Refresh Token
+4. 点击 **Verify** 验证 Token 有效性
+5. 点击 **Check Now** 检测服务端版本和可达性
 
 ### 使用
 
@@ -73,6 +88,7 @@ gradle buildPlugin
 | IntelliJ PSI API | Java 源码解析 |
 | Java HttpClient (JDK 21) | HTTP 请求 |
 | Gson | JSON 处理 |
+| Zod-like RequestValidator | 请求 JSON 前置校验 |
 
 ## 项目结构
 
@@ -80,7 +96,7 @@ gradle buildPlugin
 src/main/kotlin/com/hoppscotch/sync/
 ├── model/          # 数据模型 + SyncStatus + hash 辅助函数
 ├── psi/            # Spring Controller PSI 解析器
-├── hoppscotch/     # GraphQL 客户端 + 数据格式转换器
+├── hoppscotch/     # GraphQL 客户端 + 数据转换 + 版本检测 + 请求校验
 ├── service/        # 同步编排服务
 ├── settings/       # 持久化设置
 ├── toolwindow/     # 工具窗口 UI

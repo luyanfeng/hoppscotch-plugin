@@ -9,8 +9,9 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.panel
 import com.hoppscotch.sync.hoppscotch.HoppscotchClient
-import com.hoppscotch.sync.model.SyncStrategy
+import com.hoppscotch.sync.hoppscotch.HoppscotchVersionChecker
 import com.hoppscotch.sync.model.LogLevel
+import com.hoppscotch.sync.model.SyncStrategy
 import com.hoppscotch.sync.util.I18n
 import com.hoppscotch.sync.util.LogUtil
 import java.awt.Color
@@ -38,6 +39,19 @@ class AppSettingsConfigurable : Configurable {
     private var syncStrategyDescLabel = JBLabel()
     private var logLevelCombo = JComboBox<LogLevel>()
     private lateinit var verifyButton: JButton
+
+    // 版本信息组件
+    private var versionStatusLabel = JBLabel().apply { isVisible = false }
+    private var schemaVersionLabel = JBLabel()
+    private var pluginSchemaVersionLabel = JBLabel()
+    private var serverReachableLabel = JBLabel()
+    private var supportedSchemasLabel = JBLabel()
+    private lateinit var checkVersionButton: JButton
+
+    // 校验开关
+    private var validationEnabledCheckbox = JBCheckBox(
+        I18n.message("settings.validation.enabled")
+    )
 
     init {
         showTokensCheckbox.addActionListener {
@@ -84,6 +98,26 @@ class AppSettingsConfigurable : Configurable {
                     cell(syncStrategyDescLabel)
                 }
             }
+            group(I18n.message("settings.versionInfo.title")) {
+                row(I18n.message("settings.versionInfo.pluginSchemaVersion")) {
+                    cell(pluginSchemaVersionLabel)
+                }
+                row(I18n.message("settings.versionInfo.schemaVersion")) {
+                    cell(schemaVersionLabel)
+                }
+                row(I18n.message("settings.versionInfo.serverReachable")) {
+                    cell(serverReachableLabel)
+                }
+                row(I18n.message("settings.versionInfo.supportedSchemas")) {
+                    cell(supportedSchemasLabel)
+                }
+                row("") {
+                    button(I18n.message("settings.versionInfo.checkNow")) {
+                        checkServerVersion()
+                    }.also { checkVersionButton = it.component }
+                    cell(versionStatusLabel)
+                }
+            }
             group(I18n.message("settings.group.logging")) {
                 row(I18n.message("settings.logLevel")) {
                     cell(logLevelCombo)
@@ -91,42 +125,53 @@ class AppSettingsConfigurable : Configurable {
                 row {
                     comment(I18n.message("settings.logging.comment"))
                 }
+                row {
+                    cell(validationEnabledCheckbox)
+                        .comment(I18n.message("settings.validation.enabled.comment"))
+                }
             }
         }.also {
-        serverUrlField.text = settings.serverUrl
-        accessTokenField.text = settings.accessToken
-        languageCombo.selectedItem = if (settings.language == "zh") "中文" else "English"
+            // ---- 初始化各字段 ----
+            serverUrlField.text = settings.serverUrl
+            accessTokenField.text = settings.accessToken
+            languageCombo.selectedItem = if (settings.language == "zh") "中文" else "English"
 
-        // 初始化同步策略
-        syncStrategyCombo.model = DefaultComboBoxModel(SyncStrategy.entries.toTypedArray())
-        syncStrategyCombo.renderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
-                return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus).apply {
-                    val strategy = value as? SyncStrategy
-                    text = if (AppSettings.getInstance().language == "zh") strategy?.labelZh ?: ""
-                           else strategy?.label ?: ""
+            // 同步策略
+            syncStrategyCombo.model = DefaultComboBoxModel(SyncStrategy.entries.toTypedArray())
+            syncStrategyCombo.renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
+                    return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus).apply {
+                        val strategy = value as? SyncStrategy
+                        text = if (AppSettings.getInstance().language == "zh") strategy?.labelZh ?: ""
+                               else strategy?.label ?: ""
+                    }
                 }
             }
-        }
-        syncStrategyCombo.selectedItem = settings.getSyncStrategy()
-        syncStrategyCombo.addActionListener {
-            val selected = syncStrategyCombo.selectedItem as SyncStrategy
-            syncStrategyDescLabel.text = if (settings.language == "zh") selected.descriptionZh else selected.description
-        }
-        syncStrategyDescLabel.text = if (settings.language == "zh") settings.getSyncStrategy().descriptionZh
-                                     else settings.getSyncStrategy().description
+            syncStrategyCombo.selectedItem = settings.getSyncStrategy()
+            syncStrategyCombo.addActionListener {
+                val selected = syncStrategyCombo.selectedItem as SyncStrategy
+                syncStrategyDescLabel.text = if (settings.language == "zh") selected.descriptionZh else selected.description
+            }
+            syncStrategyDescLabel.text = if (settings.language == "zh") settings.getSyncStrategy().descriptionZh
+                                         else settings.getSyncStrategy().description
 
-        // 初始化日志级别
-        logLevelCombo.model = DefaultComboBoxModel(LogLevel.entries.toTypedArray())
-        logLevelCombo.renderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
-                return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus).apply {
-                    val level = value as? LogLevel
-                    text = if (AppSettings.getInstance().language == "zh") level?.labelZh ?: "" else level?.label ?: ""
+            // 日志级别
+            logLevelCombo.model = DefaultComboBoxModel(LogLevel.entries.toTypedArray())
+            logLevelCombo.renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): Component {
+                    return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus).apply {
+                        val level = value as? LogLevel
+                        text = if (AppSettings.getInstance().language == "zh") level?.labelZh ?: "" else level?.label ?: ""
+                    }
                 }
             }
-        }
-        logLevelCombo.selectedItem = LogLevel.fromId(settings.logLevel)
+            logLevelCombo.selectedItem = LogLevel.fromId(settings.logLevel)
+
+            // 版本信息
+            updateVersionDisplay()
+
+            // 校验开关
+            validationEnabledCheckbox.isSelected = settings.requestValidationEnabled
         }
     }
 
@@ -135,11 +180,13 @@ class AppSettingsConfigurable : Configurable {
         val langChanged = (languageCombo.selectedItem == "中文") != (settings.language == "zh")
         val strategyChanged = (syncStrategyCombo.selectedItem as? SyncStrategy) != settings.getSyncStrategy()
         val logLevelChanged = (logLevelCombo.selectedItem as? LogLevel)?.name != settings.logLevel
+        val validationChanged = validationEnabledCheckbox.isSelected != settings.requestValidationEnabled
         return serverUrlField.text != settings.serverUrl
                 || String(accessTokenField.password) != settings.accessToken
                 || langChanged
                 || strategyChanged
                 || logLevelChanged
+                || validationChanged
     }
 
     override fun apply() {
@@ -151,6 +198,7 @@ class AppSettingsConfigurable : Configurable {
         if (selectedStrategy != null) settings.setSyncStrategy(selectedStrategy)
         val selectedLogLevel = logLevelCombo.selectedItem as? LogLevel
         if (selectedLogLevel != null) settings.logLevel = selectedLogLevel.name
+        settings.requestValidationEnabled = validationEnabledCheckbox.isSelected
     }
 
     override fun reset() {
@@ -161,14 +209,109 @@ class AppSettingsConfigurable : Configurable {
         syncStrategyCombo.selectedItem = settings.getSyncStrategy()
         syncStrategyDescLabel.text = settings.getSyncStrategy().description
         logLevelCombo.selectedItem = LogLevel.fromId(settings.logLevel)
+        validationEnabledCheckbox.isSelected = settings.requestValidationEnabled
+        updateVersionDisplay()
     }
+
+    // ====================================================================
+    //  版本检测
+    // ====================================================================
+
+    /**
+     * 检测服务端版本并更新显示。
+     */
+    private fun checkServerVersion() {
+        val url = serverUrlField.text.trim()
+        if (url.isBlank()) {
+            showVersionResult(I18n.message("settings.verify.enterUrl"))
+            return
+        }
+
+        checkVersionButton.isEnabled = false
+        showVersionResult(I18n.message("settings.verify.verifying"))
+
+        Thread(Runnable {
+            try {
+                val health = HoppscotchVersionChecker.checkServerHealth(url)
+                val schemaVersion = HoppscotchVersionChecker.resolveSchemaVersion(health)
+                val supported = HoppscotchVersionChecker.isSchemaSupported(schemaVersion)
+
+                // 持久化检测结果
+                SwingUtilities.invokeLater {
+                    val settings = AppSettings.getInstance()
+                    settings.serverSchemaVersion = schemaVersion
+                    settings.serverVersionCheckedAt = System.currentTimeMillis()
+
+                    updateVersionDisplay()
+                    checkVersionButton.isEnabled = true
+
+                    val msg = if (health.reachable)
+                        "✅ ${I18n.message("settings.verify.success")} (${health.elapsedMs}ms)"
+                    else
+                        "❌ ${I18n.message("settings.verify.enterUrl")}"
+                    showVersionResult(msg)
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater {
+                    checkVersionButton.isEnabled = true
+                    showVersionResult("❌ ${e.message}")
+                }
+            }
+        }, "HS-check-version").apply { isDaemon = true; start() }
+    }
+
+    /**
+     * 更新版本信息显示区域。
+     */
+    private fun updateVersionDisplay() {
+        val settings = AppSettings.getInstance()
+        val isZh = settings.language == "zh"
+
+        pluginSchemaVersionLabel.text = I18n.message("settings.versionInfo.pluginSchemaVersion.value",
+            HoppscotchVersionChecker.DEFAULT_SCHEMA_VERSION)
+
+        val detectedVersion = settings.serverSchemaVersion.ifBlank {
+            if (isZh) "未检测" else "Not checked"
+        }
+        schemaVersionLabel.text = if (settings.serverSchemaVersion.isNotBlank()) "v${settings.serverSchemaVersion}"
+                                  else if (isZh) "未检测" else "Not checked"
+
+        val serverStatus = if (settings.serverVersionCheckedAt > 0) {
+            // 用 serverSchemaVersion 非空推断可达
+            if (settings.serverSchemaVersion.isNotBlank())
+                "✅ ${I18n.message("settings.versionInfo.serverReachable.yes")}"
+            else
+                "❌ ${I18n.message("settings.versionInfo.serverReachable.no")}"
+        } else {
+            if (isZh) "未检测" else "Not checked"
+        }
+        serverReachableLabel.text = serverStatus
+
+        supportedSchemasLabel.text = HoppscotchVersionChecker.getSupportedSchemaVersions()
+
+        if (settings.serverVersionCheckedAt > 0) {
+            versionStatusLabel.text = I18n.message("settings.versionInfo.lastChecked") + ": " +
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(java.util.Date(settings.serverVersionCheckedAt))
+            versionStatusLabel.isVisible = true
+        } else {
+            versionStatusLabel.isVisible = false
+        }
+    }
+
+    private fun showVersionResult(msg: String) {
+        versionStatusLabel.text = msg
+        versionStatusLabel.isVisible = true
+    }
+
+    // ====================================================================
+    //  Token 验证（原有）
+    // ====================================================================
 
     /** 验证 token 有效性，结果直接显示在按钮下方的状态文字上。 */
     private fun verifyTokens() {
         LOG.info("=== verifyTokens() called ===")
         LogUtil.stdout { "[HOPPSCOTCH] verifyTokens() called" }
 
-        // 检查按钮状态
         val btnReady = ::verifyButton.isInitialized
         LOG.info("verifyButton initialized=$btnReady, enabled=${if (btnReady) verifyButton.isEnabled else "N/A"}")
         LogUtil.stdout { "[HOPPSCOTCH] verifyButton initialized=$btnReady" }

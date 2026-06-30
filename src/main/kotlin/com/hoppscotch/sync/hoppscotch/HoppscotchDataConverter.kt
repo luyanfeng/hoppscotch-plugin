@@ -12,11 +12,11 @@ import com.hoppscotch.sync.model.*
  */
 class HoppscotchDataConverter {
 
-    private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
+    private val gson: Gson = GsonBuilder().setPrettyPrinting().serializeNulls().create()
 
     companion object {
         /** 紧凑 JSON 序列化，用于服务端请求 hash 计算（确保 hash 一致） */
-        private val compactGson: Gson = GsonBuilder().create()
+        private val compactGson: Gson = GsonBuilder().serializeNulls().create()
 
         /**
          * 基于 [HoppscotchRequest] 计算服务端请求的规范化 hash。
@@ -192,7 +192,7 @@ class HoppscotchDataConverter {
 
         // ---- 请求体 ----
         val body = when {
-            formBodyParams.isNotEmpty() -> buildFormBody(formBodyParams)
+            formBodyParams.isNotEmpty() -> buildFormBody(formBodyParams, endpoint.consumes.firstOrNull())
             hasRequestBody -> buildRequestBodyTemplate(endpoint)
             else -> HoppscotchBody()
         }
@@ -276,11 +276,11 @@ class HoppscotchDataConverter {
      * 为 consumes = multipart/form-data 或 application/x-www-form-urlencoded 的端点
      * 构建 form 请求体。
      */
-    private fun buildFormBody(formParams: List<EndpointParameter>): HoppscotchBody {
+    private fun buildFormBody(formParams: List<EndpointParameter>, contentType: String?): HoppscotchBody {
         val body = formParams.joinToString("&") { ep ->
             val value = ep.defaultValue?.takeIf { it.isNotBlank() } ?: ""
             "${ep.name}=$value"
         }
-        return HoppscotchBody(body = body)
+        return HoppscotchBody(contentType = contentType, body = body)
     }
 }

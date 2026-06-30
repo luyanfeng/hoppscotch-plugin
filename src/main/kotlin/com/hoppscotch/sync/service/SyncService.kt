@@ -4,8 +4,11 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.hoppscotch.sync.hoppscotch.HoppscotchClient
 import com.hoppscotch.sync.hoppscotch.HoppscotchDataConverter
+import com.hoppscotch.sync.hoppscotch.RequestValidator
 import com.hoppscotch.sync.model.*
 import com.hoppscotch.sync.psi.SpringControllerParser
+import com.hoppscotch.sync.settings.AppSettings
+import com.hoppscotch.sync.util.LogUtil
 
 /**
  * 同步编排服务。
@@ -202,7 +205,9 @@ class SyncService(
                                 processedEndpoints++
                                 continue
                             }
-
+                            if (AppSettings.getInstance().requestValidationEnabled) {
+                                RequestValidator.validateAndLog(requestJson, requestTitle)
+                            }
                             val updateResult = client.updateRequest(
                                 existingReq.id,
                                 requestTitle,
@@ -227,7 +232,9 @@ class SyncService(
                                 processedEndpoints++
                                 continue
                             }
-
+                            if (AppSettings.getInstance().requestValidationEnabled) {
+                                RequestValidator.validateAndLog(newRequestJson, requestTitle)
+                            }
                             val serverFirst = strategy == SyncStrategy.MERGE_SERVER_FIRST
                             val mergedJson = mergeRequestJsons(
                                 existingReq.request,
@@ -261,7 +268,9 @@ class SyncService(
                     processedEndpoints++
                     continue
                 }
-
+                if (AppSettings.getInstance().requestValidationEnabled) {
+                    RequestValidator.validateAndLog(requestJson, requestTitle)
+                }
                 // 创建请求
                 val requestResult = client.createRequest(requestContainerId, requestTitle, requestJson)
                 if (requestResult.isSuccess) {
@@ -462,6 +471,9 @@ class SyncService(
                             processedEndpoints++
                             continue
                         }
+                        if (AppSettings.getInstance().requestValidationEnabled) {
+                            RequestValidator.validateAndLog(requestJson, requestTitle)
+                        }
                         val updateResult = client.updateRequest(
                             existingReq.id,
                             requestTitle,
@@ -485,6 +497,9 @@ class SyncService(
                             errors.add("请求 [$requestTitle] 转换失败: ${e.message}")
                             processedEndpoints++
                             continue
+                        }
+                        if (AppSettings.getInstance().requestValidationEnabled) {
+                            RequestValidator.validateAndLog(newRequestJson, requestTitle)
                         }
                         val serverFirst = strategy == SyncStrategy.MERGE_SERVER_FIRST
                         val mergedJson = mergeRequestJsons(
@@ -519,7 +534,9 @@ class SyncService(
                 processedEndpoints++
                 continue
             }
-
+            if (AppSettings.getInstance().requestValidationEnabled) {
+                RequestValidator.validateAndLog(requestJson, requestTitle)
+            }
             // 创建请求
             val requestResult = client.createRequest(targetCollectionId, requestTitle, requestJson)
             if (requestResult.isSuccess) {

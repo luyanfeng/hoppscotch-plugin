@@ -5,6 +5,7 @@ import com.intellij.notification.*
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.StartupActivity
 import com.hoppscotch.sync.hoppscotch.HoppscotchClient
+import com.hoppscotch.sync.hoppscotch.HoppscotchVersionChecker
 import com.hoppscotch.sync.settings.AppSettings
 import com.hoppscotch.sync.util.I18n
 import java.net.URI
@@ -54,6 +55,25 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
                 notifyRefreshFailure(settings, project)
             }
         }
+
+        // 顺便检测服务端版本（后台异步，不阻塞启动）
+        detectServerVersion(settings)
+    }
+
+    /**
+     * 后台异步检测服务端版本并保存到设置。
+     */
+    private fun detectServerVersion(settings: AppSettings) {
+        Thread(Runnable {
+            try {
+                val health = HoppscotchVersionChecker.checkServerHealth(settings.serverUrl)
+                val schemaVersion = HoppscotchVersionChecker.resolveSchemaVersion(health)
+                settings.serverSchemaVersion = schemaVersion
+                settings.serverVersionCheckedAt = System.currentTimeMillis()
+            } catch (_: Exception) {
+                // 版本检测失败不影响启动
+            }
+        }, "HS-version-detect").apply { isDaemon = true; start() }
     }
 
     // ========================================================================
@@ -162,19 +182,8 @@ class TokenRefreshStartupActivity : StartupActivity.DumbAware {
     companion object {
         /**
          * 本地解码 JWT 并检查 `exp`（过期时间戳）是否已过期。
-         * 解码失败时认为已过期（安全保守）。
+         * 委托到 [HoppscotchClient.isJwtExpired] 避免重复实现。
          */
-        fun isJwtExpired(token: String): Boolean {
-            return try {
-                val parts = token.split(".")
-                if (parts.size != 3) return true
-                val payload = String(Base64.getUrlDecoder().decode(parts[1]))
-                val json = JsonParser.parseString(payload).asJsonObject
-                val exp = json.get("exp")?.asLong ?: return false
-                System.currentTimeMillis() / 1000 >= exp
-            } catch (_: Exception) {
-                true
-            }
-        }
+        fun isJwtExpired(token: String): Boolean = HoppscotchClient.isJwtExpired(token)
     }
 }

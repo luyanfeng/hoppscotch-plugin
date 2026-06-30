@@ -25,7 +25,10 @@ class AppSettings : PersistentStateComponent<AppSettings.State> {
         var syncStrategy: String = "SERVER_FIRST",
         var logLevel: String = "INFO", // 调试日志级别
         var selectedProjectsData: String = "", // JSON 数组：用户选中的项目名列表
-        var cachedScanJson: String = "" // JSON: 上次刷新扫描的 groups 序列化数据
+        var cachedScanJson: String = "", // JSON: 上次刷新扫描的 groups 序列化数据
+        var serverSchemaVersion: String = "", // 检测到的服务端 Zod schema 版本（如 "17"）
+        var serverVersionCheckedAt: Long = 0, // 上次版本检测的时间戳（毫秒）
+        var requestValidationEnabled: Boolean = true // 是否启用请求数据前置校验
     )
 
     private var myState = State()
@@ -91,6 +94,18 @@ class AppSettings : PersistentStateComponent<AppSettings.State> {
     var cachedScanJson: String
         get() = myState.cachedScanJson
         set(value) { myState.cachedScanJson = value }
+
+    var serverSchemaVersion: String
+        get() = myState.serverSchemaVersion
+        set(value) { myState.serverSchemaVersion = value }
+
+    var serverVersionCheckedAt: Long
+        get() = myState.serverVersionCheckedAt
+        set(value) { myState.serverVersionCheckedAt = value }
+
+    var requestValidationEnabled: Boolean
+        get() = myState.requestValidationEnabled
+        set(value) { myState.requestValidationEnabled = value }
 
     companion object {
         fun getInstance(): AppSettings {
