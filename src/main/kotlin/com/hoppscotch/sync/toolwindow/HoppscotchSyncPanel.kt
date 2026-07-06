@@ -2,6 +2,8 @@ package com.hoppscotch.sync.toolwindow
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.progress.ProgressIndicator
@@ -9,6 +11,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
@@ -46,6 +49,8 @@ import java.awt.event.ActionEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.io.File
+import java.io.FileWriter
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -493,6 +498,10 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(Box.createHorizontalStrut(8))
             add(statsLabel)
             add(Box.createHorizontalGlue())
+            val exportButton = JButton(I18n.message("button.export")).apply {
+                addActionListener { onExportCsv() }
+            }
+            add(exportButton)
         }
 
         // ── Root layout ──
@@ -764,19 +773,116 @@ class HoppscotchSyncPanel(private val project: Project) {
     // ====================================================================
 
     private fun applyFilter() {
-        val searchText = searchField.text.trim().lowercase()
+        val raw = searchField.text.trim()
+        val searchText = raw.lowercase()
+        val isExcludeMode = searchText.startsWith("^")
+        val excludeTerm = if (isExcludeMode) searchText.removePrefix("^") else ""
 
         rowSorter.rowFilter = object : RowFilter<TableModel, Int>() {
             override fun include(entry: Entry<out TableModel, out Int>): Boolean {
-                return searchText.isEmpty() ||
-                    (0 until entry.valueCount).any { col ->
-                        col != 1 && entry.getStringValue(col)?.lowercase()?.contains(searchText) == true
+                if (searchText.isEmpty()) return true
+
+                // 目标列：路径(2)、Controller(3)、方法(4)、项目(6)
+                val targetCols = setOf(2, 3, 4, 6)
+
+                if (isExcludeMode) {
+                    // ^xxx：在目标列中任一列包含 xxx 的行应被排除
+                    return targetCols.none { col ->
+                        entry.getStringValue(col)?.lowercase()?.contains(excludeTerm) == true
                     }
+                }
+
+                // 普通搜索：目标列中任一列包含搜索词
+                return targetCols.any { col ->
+                    entry.getStringValue(col)?.lowercase()?.contains(searchText) == true
+                }
             }
         }
         // 过滤自动选中：可见行 √，不可见行 ✗
         syncSelectionWithFilter()
         updateStatsLabel()
+    }
+
+    // ====================================================================
+    //  Export CSV
+    // ====================================================================
+
+    /** 弹出文件保存对话框，将当前表格数据导出为 CSV。 */
+    private fun onExportCsv() {
+        if (tableModel.rowCount == 0) {
+            Messages.showWarningDialog("没有数据可导出", "导出")
+            return
+        }
+
+        val descriptor = FileSaverDescriptor("导出 CSV", "", "csv")
+        val saver = FileChooser.chooseFile(descriptor, project, null)
+
+        // 保存对话框路径在 VirtualFile 中，需要转为本地文件系统路径
+        val savePath = if (saver != null) {
+            saver.path.let {
+                if (it.endsWith(".csv", ignoreCase = true)) it else "$it.csv"
+            }
+        } else return
+
+        try {
+            FileWriter(savePath, Charsets.UTF_8).use { writer ->
+                // UTF-8 BOM — Excel 正确识别中文
+                writer.write("\uFEFF")
+
+                // 表头：路径和接口类拆分为 路径/描述、接口类/Api标签
+                val headers = arrayOf(
+                    I18n.message("table.column.index"),
+                    I18n.message("table.column.path"),
+                    "描述",
+                    I18n.message("table.column.controller"),
+                    "Api标签",
+                    I18n.message("table.column.method"),
+                    I18n.message("table.column.parameters"),
+                    I18n.message("table.column.project")
+                )
+                writer.write(headers.joinToString(",") { escapeCsv(it) })
+                writer.write("\n")
+
+                // 数据行（所有可见行，按当前排序）
+                for (viewRow in 0 until rowSorter.viewRowCount) {
+                    val modelRow = rowSorter.convertRowIndexToModel(viewRow)
+
+                    val index = (modelRow + 1).toString()
+                    val pathCell = tableModel.getValueAt(modelRow, 2)
+                    val controllerCell = tableModel.getValueAt(modelRow, 3)
+                    val method = cellToString(tableModel.getValueAt(modelRow, 4))
+                    val params = cellToString(tableModel.getValueAt(modelRow, 5))
+                    val project = cellToString(tableModel.getValueAt(modelRow, 6))
+
+                    val path = (pathCell as? TagCellValue)?.line1 ?: ""
+                    val desc = (pathCell as? TagCellValue)?.line2 ?: ""
+                    val controller = (controllerCell as? TagCellValue)?.line1 ?: ""
+                    val apiTag = (controllerCell as? TagCellValue)?.line2 ?: ""
+
+                    val line = listOf(index, path, desc, controller, apiTag, method, params, project)
+                        .joinToString(",") { escapeCsv(it) }
+                    writer.write(line)
+                    writer.write("\n")
+                }
+            }
+
+            statusLabel.text = "已导出: ${File(savePath).name}"
+        } catch (e: Exception) {
+            Messages.showErrorDialog("导出失败: ${e.message}", "导出错误")
+        }
+    }
+
+    /** 将单元格值转为纯文本字符串 */
+    private fun cellToString(value: Any?): String = when (value) {
+        is TagCellValue -> value.toString()
+        else -> value?.toString() ?: ""
+    }
+
+    /** CSV 字段转义：含逗号/引号/换行的字段用双引号包裹 */
+    private fun escapeCsv(value: String): String {
+        return if (value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
+            "\"${value.replace("\"", "\"\"")}\""
+        } else value
     }
 
     /** 可见行选中，隐藏行取消选中 */
