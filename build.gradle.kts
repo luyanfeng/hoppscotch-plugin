@@ -1,4 +1,5 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("java")
@@ -20,6 +21,7 @@ dependencies {
     intellijPlatform {
         create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.1")
         bundledPlugin("com.intellij.java")
+        testFramework(TestFrameworkType.Platform)
     }
 
     testImplementation(kotlin("test-junit5"))
@@ -62,6 +64,12 @@ tasks.register<JavaExec>("runScenarioTest") {
     group = "verification"
     mainClass.set("com.hoppscotch.sync.hoppscotch.ScenarioIntegrationTest")
     classpath = sourceSets.test.get().runtimeClasspath
+    doFirst {
+        // 在任务执行前追加 IntelliJ Platform 运行时和测试框架类路径
+        classpath = classpath +
+            configurations.getByName("intellijPlatformRuntimeClasspath") +
+            configurations.getByName("intellijPlatformTestClasspath")
+    }
     systemProperties = mapOf(
         "HOPPSCOTCH_URL" to (System.getProperty("HOPPSCOTCH_URL") ?: ""),
         "HOPPSCOTCH_ACCESS_TOKEN" to (System.getProperty("HOPPSCOTCH_ACCESS_TOKEN") ?: ""),
