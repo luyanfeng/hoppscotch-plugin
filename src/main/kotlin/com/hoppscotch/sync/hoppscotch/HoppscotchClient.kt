@@ -46,6 +46,11 @@ class HoppscotchClient(
     var currentRefreshToken: String? = refreshToken
         private set
 
+    /** 当前登录用户的 UID，首次查询后缓存 */
+    @Volatile
+    var currentUserUid: String? = null
+        private set
+
     private val refreshLock = Any()
 
     // ====================================================================
@@ -70,6 +75,43 @@ class HoppscotchClient(
         }
 
         return refreshAccessToken()
+    }
+
+    /**
+     * 获取当前登录用户的 UID（通过 GraphQL `me` 查询）。
+     * 结果缓存到 [currentUserUid]，重复调用不重复请求。
+     *
+     * @return uid 字符串，查询失败时返回 null
+     */
+    fun fetchCurrentUserUid(): String? {
+        if (currentUserUid != null) return currentUserUid
+        if (currentAccessToken.isBlank()) return null
+
+        return try {
+            val query = """{"query":"query { me { uid } }"}"""
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("$normalizedUrl/graphql"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer $currentAccessToken")
+                .timeout(Duration.ofSeconds(15))
+                .POST(HttpRequest.BodyPublishers.ofString(query))
+                .build()
+
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() != 200) return null
+
+            val json = JsonParser.parseString(response.body()).asJsonObject
+            if (json.has("errors")) return null
+
+            val uid = json.getAsJsonObject("data")
+                ?.getAsJsonObject("me")
+                ?.get("uid")?.asString
+
+            currentUserUid = uid
+            uid
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ====================================================================
@@ -468,7 +510,10 @@ class HoppscotchClient(
             if (children == null || children.isJsonNull) emptyList()
             else children.asJsonArray.map { element ->
                 val obj = element.asJsonObject
-                CollectionInfo(id = obj.get("id").asString, title = obj.get("title").asString)
+                CollectionInfo(
+                    id = obj.get("id").asString,
+                    title = obj.get("title").asString
+                )
             }
         }
     }
@@ -501,7 +546,10 @@ class HoppscotchClient(
 
         return executeWithRefresh(body, "createRESTChildUserCollection") { data ->
             val obj = data.asJsonObject
-            CollectionInfo(id = obj.get("id").asString, title = obj.get("title").asString)
+            CollectionInfo(
+                id = obj.get("id").asString,
+                title = obj.get("title").asString
+            )
         }
     }
 

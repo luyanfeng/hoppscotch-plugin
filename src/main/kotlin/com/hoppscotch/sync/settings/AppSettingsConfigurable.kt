@@ -130,6 +130,12 @@ class AppSettingsConfigurable : Configurable {
                         .comment(I18n.message("settings.validation.enabled.comment"))
                 }
             }
+            group(I18n.message("settings.group.note")) {
+                row {
+                    cell(JBLabel(I18n.message("settings.note.dupCollection")))
+                        .comment(I18n.message("settings.note.dupCollection.comment"))
+                }
+            }
         }.also {
             // ---- 初始化各字段 ----
             serverUrlField.text = settings.serverUrl

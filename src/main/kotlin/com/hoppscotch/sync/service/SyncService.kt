@@ -1,5 +1,6 @@
 package com.hoppscotch.sync.service
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.hoppscotch.sync.hoppscotch.HoppscotchClient
@@ -26,6 +27,7 @@ class SyncService(
     private val indicator: ProgressIndicator? = null
 ) {
 
+    private val log = Logger.getInstance(SyncService::class.java)
     private val converter = HoppscotchDataConverter()
 
     /**
@@ -76,14 +78,20 @@ class SyncService(
         val syncedEndpoints = mutableMapOf<String, String>() // endpointKey → serverId
         val totalCollections = groups.size
 
-        // 1. 查询已有集合（失败时不影响后续）
-        val existingCollections: MutableMap<String, CollectionInfo>
+        // 1. 查询已有集合（flat 列表，保留所有同名集合）
+        val existingCollections: MutableList<CollectionInfo>
         if (targetParentCollectionId != null) {
-            existingCollections = client.listChildCollections(targetParentCollectionId)
-                .getOrNull()?.associateBy { it.title }?.toMutableMap() ?: mutableMapOf()
+            val targetResult = client.listChildCollections(targetParentCollectionId)
+            if (targetResult.isFailure) {
+                errors.add("查询服务端集合失败: ${targetResult.exceptionOrNull()?.message}")
+            }
+            existingCollections = targetResult.getOrNull()?.toMutableList() ?: mutableListOf()
         } else {
-            existingCollections = client.listCollections()
-                .getOrNull()?.associateBy { it.title }?.toMutableMap() ?: mutableMapOf()
+            val rootResult = client.listCollections()
+            if (rootResult.isFailure) {
+                errors.add("查询服务端集合失败: ${rootResult.exceptionOrNull()?.message}")
+            }
+            existingCollections = rootResult.getOrNull()?.toMutableList() ?: mutableListOf()
         }
 
         indicator?.let {
@@ -94,17 +102,17 @@ class SyncService(
         // 遍历每个 ControllerGroup
         for ((groupIndex, group) in groups.withIndex()) {
             val collectionTitle = buildCollectionTitle(group)
-            val existingCollection = existingCollections[collectionTitle]
 
             indicator?.let {
                 it.text = "[${groupIndex + 1}/$totalCollections] 处理集合: $collectionTitle"
                 it.fraction = processedEndpoints.toDouble() / totalEndpoints.coerceAtLeast(1)
             }
 
-            // 2a. 获取集合 ID（存在则复用，否则新建）
+            // 2a. 按 (title) 匹配已有集合，避免重复创建
+            val matched = existingCollections.filter { it.title == collectionTitle }
             val collectionInfo: CollectionInfo?
-            if (existingCollection != null) {
-                collectionInfo = existingCollection
+            if (matched.isNotEmpty()) {
+                collectionInfo = matched.first()
                 collectionsSkipped++
             } else {
                 val collectionResult = if (targetParentCollectionId != null) {
@@ -122,8 +130,8 @@ class SyncService(
                     processedEndpoints += group.endpoints.size
                     continue
                 }
-                // 新建的集合加入已有集合映射，避免同模块后续 group 重复创建
-                existingCollections[collectionTitle] = collectionInfo
+                // 新建的集合加入已有集合列表，避免同模块后续 group 重复创建
+                existingCollections.add(collectionInfo)
                 collectionsCreated++
             }
 
@@ -137,9 +145,14 @@ class SyncService(
                     it.text = "[${groupIndex + 1}/$totalCollections] Controller 子集合: $controllerGroupTitle"
                 }
 
-                val existingSubCols = client.listChildCollections(collectionInfo.id)
-                    .getOrNull()?.associateBy { it.title } ?: emptyMap()
-                val existingSubCol = existingSubCols[controllerGroupTitle]
+                val subResult = client.listChildCollections(collectionInfo.id)
+                val existingSubCols = subResult.getOrNull()?.toMutableList() ?: mutableListOf()
+                if (subResult.isFailure) {
+                    LogUtil.warn(log) { "查询 Controller 子集合失败: ${subResult.exceptionOrNull()?.message}" }
+                }
+                // 按 title 匹配，避免重复创建
+                val matchedSub = existingSubCols.filter { it.title == controllerGroupTitle }
+                val existingSubCol = matchedSub.firstOrNull()
 
                 if (existingSubCol != null) {
                     requestContainerId = existingSubCol.id
@@ -147,18 +160,21 @@ class SyncService(
                 } else {
                     val subColResult = client.createChildCollection(controllerGroupTitle, collectionInfo.id)
                     if (subColResult.isSuccess) {
-                        requestContainerId = subColResult.getOrThrow().id
+                        val subCol = subColResult.getOrThrow()
+                        requestContainerId = subCol.id
                         isExistingContainer = false
+                        // 新建的子集合加入列表，避免后续同名 group 重复创建
+                        existingSubCols.add(subCol)
                     } else {
                         // 回退到模块集合
                         requestContainerId = collectionInfo.id
-                        isExistingContainer = existingCollection != null
+                        isExistingContainer = matched.isNotEmpty()
                         errors.add("Controller 子集合 [$controllerGroupTitle] 创建失败: ${subColResult.exceptionOrNull()?.message}")
                     }
                 }
             } else {
                 requestContainerId = collectionInfo.id
-                isExistingContainer = existingCollection != null
+                isExistingContainer = matched.isNotEmpty()
             }
 
             // 2c. 查询该集合中已有的请求（仅对已有集合才查询，新建集合已知为空）

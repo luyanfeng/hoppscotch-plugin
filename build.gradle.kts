@@ -46,6 +46,28 @@ tasks.register<JavaExec>("runIntegrationTest") {
     ).filterValues { it.isNotEmpty() }
 }
 
+tasks.register<JavaExec>("runSyncGroupReuseTest") {
+    description = "运行 SyncGroup 集合复用逻辑验证测试"
+    group = "verification"
+    mainClass.set("com.hoppscotch.sync.hoppscotch.SyncGroupReuseTest")
+    classpath = sourceSets.test.get().runtimeClasspath
+    systemProperties = mapOf(
+        "HOPPSCOTCH_URL" to (System.getProperty("HOPPSCOTCH_URL") ?: ""),
+        "HOPPSCOTCH_ACCESS_TOKEN" to (System.getProperty("HOPPSCOTCH_ACCESS_TOKEN") ?: ""),
+    ).filterValues { it.isNotEmpty() }
+}
+
+tasks.register<JavaExec>("runScenarioTest") {
+    description = "运行场景化集成测试"
+    group = "verification"
+    mainClass.set("com.hoppscotch.sync.hoppscotch.ScenarioIntegrationTest")
+    classpath = sourceSets.test.get().runtimeClasspath
+    systemProperties = mapOf(
+        "HOPPSCOTCH_URL" to (System.getProperty("HOPPSCOTCH_URL") ?: ""),
+        "HOPPSCOTCH_ACCESS_TOKEN" to (System.getProperty("HOPPSCOTCH_ACCESS_TOKEN") ?: ""),
+    ).filterValues { it.isNotEmpty() }
+}
+
 intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
