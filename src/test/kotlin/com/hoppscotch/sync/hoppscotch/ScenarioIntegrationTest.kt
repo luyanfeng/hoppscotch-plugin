@@ -2,6 +2,7 @@ package com.hoppscotch.sync.hoppscotch
 
 import com.hoppscotch.sync.model.*
 import com.hoppscotch.sync.model.LogLevel
+import com.hoppscotch.sync.service.SyncService
 import com.hoppscotch.sync.settings.AppSettings
 import com.hoppscotch.sync.util.LogUtil
 import io.mockk.every
@@ -74,6 +75,7 @@ object ScenarioIntegrationTest {
             runModule("C3", "数据转换") { testDataConversion() }
             runModule("C5", "同步状态检测") { testSyncStatusDetection() }
             runModule("C6", "持久化") { testPersistence() }
+            runModule("S4P", "合并策略") { testMergeStrategies() }
 
             // ============================================================
             // 需要服务端的测试
@@ -401,6 +403,46 @@ object ScenarioIntegrationTest {
     }
 
     // ====================================================================
+    // 模块 S4（纯逻辑部分）— 合并策略（不需要服务器）
+    // ====================================================================
+
+    private fun testMergeStrategies() {
+        // S4-8: MERGE_SERVER_FIRST — 服务端字段优先，推送字段补充
+        try {
+            println("\n[S4-8] MERGE_SERVER_FIRST：服务端字段优先合并...")
+            val serverJson = """{"method":"GET","endpoint":"/api/users","name":"server-name"}"""
+            val pluginJson = """{"method":"POST","endpoint":"/api/users","name":"plugin-name","headers":[]}"""
+            val merged = SyncService.mergeRequestJsons(serverJson, pluginJson, serverFirst = true)
+            val obj = com.google.gson.JsonParser.parseString(merged).asJsonObject
+            println("  合并结果: $merged")
+            check(obj.get("method").asString == "GET") { "SERVER_FIRST: method 应保留服务端值" }
+            check(obj.get("name").asString == "server-name") { "SERVER_FIRST: name 应保留服务端值" }
+            check(obj.get("headers")?.isJsonArray == true) { "SERVER_FIRST: headers 应从推送方补充" }
+            println("  ✅ S4-8 通过")
+        } catch (e: Throwable) {
+            println("  ❌ S4-8 失败: ${e.message}")
+            e.printStackTrace()
+        }
+
+        // S4-9: MERGE_PLUGIN_FIRST — 推送字段优先，服务端字段补充
+        try {
+            println("\n[S4-9] MERGE_PLUGIN_FIRST：推送字段优先合并...")
+            val serverJson = """{"method":"GET","endpoint":"/api/users","name":"server-name"}"""
+            val pluginJson = """{"method":"POST","endpoint":"/api/users","name":"plugin-name","headers":[]}"""
+            val merged = SyncService.mergeRequestJsons(serverJson, pluginJson, serverFirst = false)
+            val obj = com.google.gson.JsonParser.parseString(merged).asJsonObject
+            println("  合并结果: $merged")
+            check(obj.get("method").asString == "POST") { "PLUGIN_FIRST: method 应用推送值覆盖" }
+            check(obj.get("name").asString == "plugin-name") { "PLUGIN_FIRST: name 应用推送值覆盖" }
+            check(obj.get("headers")?.isJsonArray == true) { "PLUGIN_FIRST: headers 应从推送方补充" }
+            println("  ✅ S4-9 通过")
+        } catch (e: Throwable) {
+            println("  ❌ S4-9 失败: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    // ====================================================================
     // 模块 C1：服务端连接配置（需要服务器）
     // ====================================================================
 
@@ -504,6 +546,7 @@ object ScenarioIntegrationTest {
         var projectCollId: String? = null
         var controllerCollId: String? = null
         var requestId: String? = null
+        var strategyReqId: String? = null
 
         try {
             // S4-1: 首次同步 — 模拟 createCollection → createChildCollection → createRequest
@@ -657,6 +700,53 @@ object ScenarioIntegrationTest {
                 println("  ✅ S4-5 通过")
             } catch (e: Throwable) {
                 println("  ❌ S4-5 失败: ${e.message}")
+                e.printStackTrace()
+            }
+
+            // S4-6: SERVER_FIRST 策略模拟 — 创建请求后再次同步应跳过，内容不变
+            try {
+                println("\n[S4-6] SERVER_FIRST 策略：创建请求，验证内容完整...")
+                val reqJson1 = buildDefaultRequestJson("GET", "/api/test/s4-strategy")
+                val req1 = client.createRequest(controllerCollId!!, "GET /api/test/s4-strategy", reqJson1).getOrThrow()
+                strategyReqId = req1.id
+                println("  创建请求: id=${req1.id}")
+
+                // 读取服务端存储的请求内容，验证往返一致
+                val serverReqs = client.listRequests(controllerCollId).getOrThrow()
+                val serverReq = serverReqs.first { it.title == "GET /api/test/s4-strategy" }
+                val serverObj = com.google.gson.JsonParser.parseString(serverReq.request).asJsonObject
+                println("  服务端 method=${serverObj.get("method").asString}, endpoint=${serverObj.get("endpoint").asString}")
+                check(serverObj.get("method").asString == "GET") { "method 应为 GET" }
+                check(serverObj.get("endpoint").asString == "/api/test/s4-strategy") { "endpoint 不匹配" }
+
+                // SERVER_FIRST 行为验证：再次同步时不重复创建
+                val reqsAgain = client.listRequests(controllerCollId).getOrThrow()
+                val matches = reqsAgain.filter { it.title == "GET /api/test/s4-strategy" }
+                check(matches.size == 1) { "不应重复创建请求，实际 ${matches.size} 个" }
+                println("  ✅ S4-6 通过（SERVER_FIRST：请求未重复创建，内容完整）")
+            } catch (e: Throwable) {
+                println("  ❌ S4-6 失败: ${e.message}")
+                e.printStackTrace()
+            }
+
+            // S4-7: PLUGIN_FIRST 策略模拟 — 覆盖更新请求内容
+            try {
+                println("\n[S4-7] PLUGIN_FIRST 策略：覆盖更新请求内容...")
+                val strategyId = checkNotNull(strategyReqId) { "S4-7 依赖 S4-6 创建的请求 ID" }
+                val reqJson2 = buildDefaultRequestJson("POST", "/api/test/s4-strategy")
+                val updated = client.updateRequest(strategyId, "GET /api/test/s4-strategy", reqJson2).getOrThrow()
+                println("  更新请求: id=${updated.id}")
+
+                // 验证覆盖生效
+                val serverReqs2 = client.listRequests(controllerCollId!!).getOrThrow()
+                val serverReq2 = serverReqs2.first { it.id == strategyReqId }
+                val serverObj2 = com.google.gson.JsonParser.parseString(serverReq2.request).asJsonObject
+                val updatedMethod = serverObj2.get("method").asString
+                println("  更新后 method=$updatedMethod, endpoint=${serverObj2.get("endpoint").asString}")
+                check(updatedMethod == "POST") { "PLUGIN_FIRST: 更新后 method 应为 POST，实际 $updatedMethod" }
+                println("  ✅ S4-7 通过（PLUGIN_FIRST：请求内容已覆盖更新）")
+            } catch (e: Throwable) {
+                println("  ❌ S4-7 失败: ${e.message}")
                 e.printStackTrace()
             }
 

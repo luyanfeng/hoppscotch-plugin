@@ -371,43 +371,46 @@ class SyncService(
         return endpoint.description?.takeIf { it.isNotBlank() } ?: endpoint.fullPath
     }
 
-    /**
-     * 合并两个请求 JSON。
-     *
-     * @param serverJson 服务端的请求 JSON
-     * @param newJson 插件推送的请求 JSON
-     * @param serverFirst true=服务端优先（保留服务端字段），false=推送优先（用推送覆盖）
-     * @return 合并后的 JSON 字符串
-     */
-    private fun mergeRequestJsons(serverJson: String, newJson: String, serverFirst: Boolean): String {
-        return try {
-            val serverObj = com.google.gson.JsonParser.parseString(serverJson).asJsonObject
-            val newObj = com.google.gson.JsonParser.parseString(newJson).asJsonObject
+    companion object {
+        /**
+         * 合并两个请求 JSON。
+         *
+         * @param serverJson 服务端的请求 JSON
+         * @param newJson 插件推送的请求 JSON
+         * @param serverFirst true=服务端优先（保留服务端字段），false=推送优先（用推送覆盖）
+         * @return 合并后的 JSON 字符串
+         */
+        @JvmStatic
+        fun mergeRequestJsons(serverJson: String, newJson: String, serverFirst: Boolean): String {
+            return try {
+                val serverObj = com.google.gson.JsonParser.parseString(serverJson).asJsonObject
+                val newObj = com.google.gson.JsonParser.parseString(newJson).asJsonObject
 
-            val result = com.google.gson.JsonObject()
+                val result = com.google.gson.JsonObject()
 
-            // 收集所有 key
-            val allKeys = mutableSetOf<String>()
-            allKeys.addAll(serverObj.keySet())
-            allKeys.addAll(newObj.keySet())
+                // 收集所有 key
+                val allKeys = mutableSetOf<String>()
+                allKeys.addAll(serverObj.keySet())
+                allKeys.addAll(newObj.keySet())
 
-            for (key in allKeys) {
-                when {
-                    serverFirst -> {
-                        // 服务端优先：优先取服务端值，缺失时取推送值
-                        result.add(key, serverObj.get(key) ?: newObj.get(key))
-                    }
-                    else -> {
-                        // 推送优先：优先取推送值，缺失时取服务端值
-                        result.add(key, newObj.get(key) ?: serverObj.get(key))
+                for (key in allKeys) {
+                    when {
+                        serverFirst -> {
+                            // 服务端优先：优先取服务端值，缺失时取推送值
+                            result.add(key, serverObj.get(key) ?: newObj.get(key))
+                        }
+                        else -> {
+                            // 推送优先：优先取推送值，缺失时取服务端值
+                            result.add(key, newObj.get(key) ?: serverObj.get(key))
+                        }
                     }
                 }
-            }
 
-            result.toString()
-        } catch (e: Exception) {
-            // 合并失败时返回推送的完整内容
-            newJson
+                result.toString()
+            } catch (e: Exception) {
+                // 合并失败时返回推送的完整内容
+                newJson
+            }
         }
     }
 
