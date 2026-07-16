@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-            version = "1.3.4"
+            version = "1.3.5"
 
 repositories {
     mavenCentral()
@@ -80,7 +80,7 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-            version = "1.3.4"
+            version = "1.3.5"
         description = """
             <h3>English</h3>
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
@@ -119,6 +119,7 @@ intellijPlatform {
         """.trimIndent()
             changeNotes = """
             <ul>
+                <li><b>1.3.5</b> 新增: 搜索框后"仅已同步"过滤勾选框；状态栏悬停提示复制快捷键；精简 AGENTS.md</li>
                 <li><b>1.3.4</b> Fix: 移除依赖 orderIndex（GraphQL 不暴露该字段），改用 title 确定性匹配以避免集合/请求重复创建；新增 25 项场景化集成测试覆盖 6 个模块（连接/版本/数据转换/同步编排/状态检测/持久化）</li>
                 <li><b>1.3.0</b> 新增: 服务端版本检测；请求 JSON 前置 Zod 校验；请求 Schema 升级至 v17；修复 body 序列化兼容性</li>
                 <li><b>1.2.4</b> Fix: 请求 body 序列化时 Gson 排除 null 字段导致 web 端 Zod 校验失败显示 Untitled</li>
