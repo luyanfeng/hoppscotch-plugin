@@ -254,6 +254,17 @@ class HoppscotchSyncPanel(private val project: Project) {
                     copySelectedCell(mainTable)
                 }
             })
+
+            // 鼠标悬停时显示复制提示
+            val tableHoverAdapter = object : MouseAdapter() {
+                override fun mouseEntered(e: MouseEvent) {
+                    copyHintLabel.isVisible = true
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    copyHintLabel.isVisible = false
+                }
+            }
+            addMouseListener(tableHoverAdapter)
         }
 
         // ── Frozen columns: 固定前两列（# 和复选框），不随左右滑动 ──
@@ -333,6 +344,16 @@ class HoppscotchSyncPanel(private val project: Project) {
             getActionMap().put("copyCell", object : AbstractAction() {
                 override fun actionPerformed(e: ActionEvent) {
                     copySelectedCell(frozenTableSelf)
+                }
+            })
+
+            // 鼠标悬停时显示复制提示
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseEntered(e: MouseEvent) {
+                    copyHintLabel.isVisible = true
+                }
+                override fun mouseExited(e: MouseEvent) {
+                    copyHintLabel.isVisible = false
                 }
             })
         }
@@ -707,7 +728,6 @@ class HoppscotchSyncPanel(private val project: Project) {
 
     /** 更新统计标签：选中/未选中、已同步/未同步（仅可见行） */
     private fun updateStatsLabel() {
-        copyHintLabel.isVisible = tableModel.rowCount > 0
         val visibleRows = viewRowCount()
         var selected = 0
         var synced = 0
