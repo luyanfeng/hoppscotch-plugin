@@ -74,6 +74,7 @@ class HoppscotchSyncPanel(private val project: Project) {
     private lateinit var bottomPanel: JPanel
     private val searchField: JBTextField
     private val syncedOnlyCheckbox: JCheckBox
+    private val copyHintLabel: JLabel
     private val projectButton: JButton
     private val columnsButton: JButton
     private val statsLabel: JLabel
@@ -518,10 +519,16 @@ class HoppscotchSyncPanel(private val project: Project) {
             add(filterToolbar)
             add(selectionToolbar)
         }
+        copyHintLabel = JLabel(I18n.message("status.copyHint")).apply {
+            foreground = JBColor.GRAY
+            isVisible = false
+        }
         bottomPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             border = BorderFactory.createEmptyBorder(4, 8, 4, 8)
             add(statusLabel)
+            add(Box.createHorizontalStrut(16))
+            add(copyHintLabel)
             add(Box.createHorizontalGlue())
             add(JLabel("  "))
             add(timeLabel)
@@ -700,6 +707,7 @@ class HoppscotchSyncPanel(private val project: Project) {
 
     /** 更新统计标签：选中/未选中、已同步/未同步（仅可见行） */
     private fun updateStatsLabel() {
+        copyHintLabel.isVisible = tableModel.rowCount > 0
         val visibleRows = viewRowCount()
         var selected = 0
         var synced = 0
