@@ -6,143 +6,94 @@ IntelliJ IDEA 插件，扫描 Spring Boot Controller 并通过 GraphQL API 同�
 
 - **语言**: Kotlin 2.3.0 + JDK 21
 - **构建**: Gradle 9.3 (wrapper), IntelliJ Platform Gradle Plugin 2.6.0
-- **目标平台**: IntelliJ IDEA Ultimate 2026.1+ (Build 261–262.*)
-- **插件 ID**: `com.hoppscotch.sync`，已发布到 JetBrains Marketplace
+- **目标平台**: IntelliJ IDEA Ultimate 2026.1+ (Build 261–262.\*)
+- **插件 ID**: `com.hoppscotch.sync`
 - **依赖**: `com.intellij.java`（bundledPlugin），使用 IntelliJ PSI API 解析 Java 源码
-- **包路径**: `com.hoppscotch.sync.*`
-- **单模块项目**（非 monorepo），所有源码在 `src/main/kotlin/com/hoppscotch/sync/`
+- **单模块项目**，源码 `src/main/kotlin/com/hoppscotch/sync/`
 
 ## 开发命令
 
 ```bash
-# 编译 Kotlin
-gradle compileKotlin
-
-# 构建插件 JAR
-gradle buildPlugin
-# 产物: build/libs/hoppscotch-sync-plugin-1.3.2.jar
-#       build/distributions/hoppscotch-sync-plugin-1.3.2.zip
-
-# 启动沙箱 IDEA（自动加载插件）
-gradle runIde
-
-# 验证插件兼容性
-gradle verifyPlugin
-
-# 运行单元测试（JUnit 5 + MockK）
-gradle test
-
-# 运行集成测试（独立 main 方法，不依赖 IntelliJ Platform）
-gradle runIntegrationTest -DHOPPSCOTCH_URL=... -DHOPPSCOTCH_ACCESS_TOKEN=...
+gradle compileKotlin            # 编译
+gradle buildPlugin               # 构建插件 JAR / ZIP（build/distributions/）
+gradle runIde                    # 启动沙箱 IDEA（需 --no-configuration-cache 防缓存问题）
+gradle verifyPlugin              # 验证兼容性
+gradle test                      # 单元测试（JUnit 5 + MockK，不依赖 IntelliJ Platform）
+gradle runScenarioTest -DHOPPSCOTCH_URL=... -DHOPPSCOTCH_ACCESS_TOKEN=...  # 25 项场景集成测试
 ```
 
-**注意事项**:
-- `gradle runIde` 可能需要 `--no-configuration-cache` 以避免缓存问题
-- SDKMAN 管理 JDK：`source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk env install`
-- `.sdkmanrc` 指定 `java=21.0.11-amzn`
+**JDK**: SDKMAN 管理 — `source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk env install`
+`.sdkmanrc` 指定 `java=21.0.11-amzn`。
 
-## 项目结构（关键文件）
+## 架构要点
 
-```
-src/main/kotlin/com/hoppscotch/sync/
-├── model/
-│   ├── SpringEndpoint.kt          # 数据模型：HttpMethod, EndpointParameter, SpringEndpoint, ControllerGroup
-│   ├── HoppscotchModels.kt        # Hoppscotch 请求模型、SyncStatus、SyncResult、SyncPersistData、computeEndpointKey/hash
-│   └── SyncStrategy.kt            # 同步策略枚举（SERVER_FIRST / PLUGIN_FIRST / MERGE_*）
-├── psi/
-│   └── SpringControllerParser.kt  # PSI 解析器 — 扫描 @RestController/@Controller，提取端点+参数+JSON 骨架
-├── hoppscotch/
-│   ├── HoppscotchClient.kt        # GraphQL 客户端（JDK HttpClient），支持双 Token 自动刷新
-│   ├── HoppscotchDataConverter.kt # SpringEndpoint → HoppscotchRequest 转换，hash 计算
-│   ├── HoppscotchVersionChecker.kt# 服务端版本/健康检测
-│   └── RequestValidator.kt        # 请求 JSON 前置校验（Zod schema 约束）
-├── service/
-│   └── SyncService.kt             # 同步编排 — 集合创建/增量匹配/请求创建
-├── settings/
-│   ├── AppSettings.kt             # 持久化设置（PersistentStateComponent → hoppscotch-sync-settings.xml）
-│   └── AppSettingsConfigurable.kt # 设置 UI 面板
-├── toolwindow/
-│   ├── HoppscotchSyncPanel.kt     # 工具窗口主面板（表格、搜索、同步状态颜色、列显隐）
-│   ├── CollectionPickerDialog.kt  # 集合树选择对话框
-│   └── HoppscotchSyncToolWindowFactory.kt
-├── util/
-│   ├── I18n.kt                    # 国际化（中/英切换）
-│   └── LogUtil.kt                 # 调试日志门面
-└── action/
-    └── SyncAction.kt              # Tools 菜单动作
-```
+### 包结构
 
-## 关键架构细节
+| 包 | 职责 |
+|---|---|
+| `model/` | `SpringEndpoint`, `ControllerGroup`, `HoppscotchModels`（请求模型/状态/hash）, `SyncStrategy` |
+| `psi/` | `SpringControllerParser` — 注解索引搜索优先，降级文件遍历 |
+| `hoppscotch/` | `HoppscotchClient`（JDK HttpClient + GraphQL）, `DataConverter`, `VersionChecker`, `RequestValidator` |
+| `service/` | `SyncService` — 同步编排 |
+| `settings/` | `AppSettings`（PersistentStateComponent → `hoppscotch-sync-settings.xml`）, 设置面板 |
+| `toolwindow/` | 工具窗口 UI: 表格/搜索/集合选择器 |
+| `util/` | `I18n`（中英切换）, `LogUtil` |
+| `action/` | `SyncAction` — Tools 菜单入口 |
 
-### 数据流
+### 关键约束
 
-1. **PSI 解析** → `SpringControllerParser.parseAllControllers(moduleNames?)` 返回 `List<ControllerGroup>`
-   - 双模式：优先 `AnnotatedElementsSearch`（索引级搜索），降级为文件遍历
-   - 支持 Swagger `@Api`（类级标签）、`@ApiOperation` / `@Operation`（方法级描述）
-   - `@RequestBody` 复杂对象自动递归生成 JSON 骨架（用于展示）和 JSON 模板（用于同步）
-
-2. **数据转换** → `HoppscotchDataConverter.toHoppscotchRequest(endpoint)` → `toRequestRequestBody()` 序列化为 Hoppscotch GraphQL 请求 JSON
-
-3. **同步** → `SyncService.syncGroups(groups, targetParentCollectionId?, strategy, createSubDirectories)`
-   - 按 ControllerGroup 创建/复用 Hoppscotch 集合
-   - 增量匹配：使用 `methodEndpointKey`（`"GET:/api/users/{id}"`）匹配已有请求，不依赖 title
-   - 支持四种 `SyncStrategy`：服务端优先/插件推送优先/两种合并模式
-
-4. **状态检测** → 双 hash 对比：`computeEndpointHash()`（本地代码） vs `HoppscotchDataConverter.computeServerRequestHash()`（服务端请求 JSON）
-
-### 认证
-
-- **双 Token**: `access_token` + `refresh_token`，通过 Bearer header 和 Set-Cookie 交互
-- **自动刷新**: 遇 401 时先尝试 `refreshAccessToken()`（Bearer refresh_token 调 desktop 端点），失败则 `refreshViaDesktop()`（Bearer access_token）
-- **本地 JWT 预检**: `isJwtExpired()` 解码 JWT payload 检查 exp，提前 5 分钟预刷新
-
-### 持久化
-
-- `AppSettings` 基于 IntelliJ `PersistentStateComponent`，存储为 `hoppscotch-sync-settings.xml`
-- 核心数据：serverUrl/tokens、同步策略、列宽/显隐、syncStatusData（`endpointKey → "serverId,localHash,srvHash"`）、缓存扫描结果
-- `SyncPersistData.parse()` 兼容旧格式（`"localHash,srvHash"` 和 `"localHash"`）
-
-### Hoppscotch GraphQL API
-
-端点: `{serverUrl}/graphql`，认证: `Authorization: Bearer <access_token>`
-
-关键操作（详见 `HoppscotchClient.kt`）：
-- `me` 查询 → Token 验证
-- `rootRESTUserCollections` / `userCollection(id) { childrenREST }` → 集合树
-- `createRESTRootUserCollection` / `createRESTChildUserCollection` → 创建集合
-- `createRESTUserRequest` / `updateRESTUserRequest` → 请求 CRUD
-- `deleteUserCollection` → 递归删除集合
-- `GET /v1/auth/desktop?redirect_uri=...` → Token 刷新
-
-### 文件资源
-
-`src/main/resources/META-INF/plugin.xml` — 插件描述符
-`src/main/resources/messages/HoppscotchSyncBundle*.properties` — 中英文国际化资源
+- **仅支持 Spring Boot (Java)**。Go/Node.js/Python 不支持。
+- **GraphQL 不暴露 `orderIndex`**（Prisma DB 字段）。集合匹配用 `filter{title}.first()`，如需避免重复创建，必须确保同名集合不在同一层级出现。插件本身不会重复创建同名集合。
+- **请求匹配用 `methodEndpointKey`**（`"GET:/api/users/{id}"`），不是 title。修改标题不会断匹配。代码变更导致路径/方法改变 → 旧数据变为 UNSYNCED（白色），这是设计行为。
+- **JWT 预检**：`isJwtExpired()` 提前 5 分钟预刷新，有效期内跳过网络调用。
+- **持久化向后兼容**：`SyncPersistData.parse()` 支持 `"serverId,localHash,srvHash"` / `"localHash,srvHash"` / `"localHash"` 三种格式。
 
 ## 测试
 
-### 单元测试
+### 单元测试（`gradle test`）
 
-- **框架**: JUnit 5 + MockK (`io.mockk:mockk:1.13.14`)
-- **运行**: `gradle test`
-- **位置**: `src/test/kotlin/com/hoppscotch/sync/`
-- 单元测试不依赖 IntelliJ Platform，可运行 Gson/hash 等逻辑测试
+JUnit 5 + MockK，不依赖 IntelliJ Platform。可测试 Gson/hash/RequestValidator 等纯逻辑。
 
-### 集成测试
+### 场景集成测试（`gradle runScenarioTest`）
 
-- **入口**: `com.hoppscotch.sync.hoppscotch.IntegrationTestRunner`（独立 main 方法）
-- **运行**: `gradle runIntegrationTest -DHOPPSCOTCH_URL=... -DHOPPSCOTCH_ACCESS_TOKEN=...`
-- **环境变量**: `HOPPSCOTCH_URL`, `HOPPSCOTCH_ACCESS_TOKEN`, `HOPPSCOTCH_REFRESH_TOKEN`（可选）, `TARGET_COLLECTION_ID`（可选）
-- 直接运行 main 方法，不通过 IntelliJ 测试沙箱
-- 测试数据使用 `__hoppscotch_plugin_test__` 前缀，启动时自动清理前次残留
-- ⚠️ 不要使用 `System.exit()` — 会导致 finally 清理块不执行，造成测试集合泄漏
+入口：`ScenarioIntegrationTest.kt`（独立 main 方法，不是 IntelliJ 沙箱）。
+测试数据前缀 `hstest`，启动时自动清理前次残留，结束时清理本次数据。
+6 模块 25 个测试点，纯逻辑测试（C3/C5/C6/S4P）在前，需服务端测试（C1/C2/S4）在后。
+
+**运行要求**：
+- 环境变量 `HOPPSCOTCH_URL` + `HOPPSCOTCH_ACCESS_TOKEN`（必需）
+- `runScenarioTest` 在 `doFirst` 中追加 `intellijPlatformRuntimeClasspath` + `intellijPlatformTestClasspath`（因为用 `mockk` mock `Logger`/`LogUtil`）
+- ⚠️ **不要用 `System.exit()`** — 导致 finally 清理块不执行，测试集合泄漏
+- `LogUtil` 和 `com.intellij.openapi.diagnostic.Logger` 必须在测试 `main()` 开头显式 mock：
+  ```kotlin
+  mockkStatic(Logger::class)
+  every { Logger.getInstance(any<Class<*>>()) } returns mockk(relaxed = true)
+  mockkObject(LogUtil)
+  every { LogUtil.stdout(any()) } answers {}
+  every { LogUtil.debug(any(), any()) } answers {}
+  // ...
+  ```
+
+### 合并策略测试（纯逻辑）
+
+`SyncService.mergeRequestJsons()` 在 `SyncService` companion object 中（`@JvmStatic`），可直接调用，无需服务端。
+
+## 发布
+
+```bash
+# 前提：cert 文件在 /home/.../hoppscotch-cert/
+export CERTIFICATE_CHAIN=$(cat /path/to/chain.crt)
+export PRIVATE_KEY=$(cat /path/to/private.pem)   # 支持未加密私钥
+export JETBRAINS_TOKEN='perm-...'
+gradle publishPlugin   # 自动 sign → upload
+```
+
+`build.gradle.kts` 中 `signing`/`publishing` 配置读取环境变量，无密码的 `private.pem` 可用，`PRIVATE_KEY_PASSWORD` 可省略。
+Marketplace token 需从 JetBrains Account 获取。
 
 ## 注意事项
 
-- **仅支持 Spring Boot (Java) 项目**。Go/Node.js/Python 不支持。
-- 修改 `plugin.xml` 时注意 `since-build="261" until-build="262.*"` 约束
-- 新增功能需在 `plugin.xml` 注册 extension/action
-- 修改持久化格式时须保持向后兼容（参考 `SyncPersistData.parse()` 的多格式兼容模式）
-- 集合标题中的特殊字符会被 `sanitizeTitle()` 替换为下划线
-- 同步匹配使用 `methodEndpointKey`（`method:endpoint`）而非 title，修改标题不会断匹配
-- 代码变更后同步匹配 key 变化（路径/方法修改）会导致旧数据变为 UNSYNCED（白色），这是设计行为
+- 修改 `plugin.xml` 时注意 `since-build="261" until-build="262.*"` 约束，新增 extension/action 需注册。
+- `plugin.xml` 中的 `<version>` 和 `<description>` 会在 `patchPluginXml` 任务中被 `build.gradle.kts` 配置覆盖，直接改 `build.gradle.kts` 即可。
+- 集合标题中的特殊字符（`<>:"/\|?*[]`）会被 `sanitizeTitle()` 替换为下划线。
+- 使用 IntelliJ PSI API 时注意双模式：优先 `AnnotatedElementsSearch`（索引级搜索），降级为文件遍历。

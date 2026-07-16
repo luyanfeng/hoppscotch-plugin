@@ -73,6 +73,7 @@ class HoppscotchSyncPanel(private val project: Project) {
     private val timeLabel: JLabel
     private lateinit var bottomPanel: JPanel
     private val searchField: JBTextField
+    private val syncedOnlyCheckbox: JCheckBox
     private val projectButton: JButton
     private val columnsButton: JButton
     private val statsLabel: JLabel
@@ -440,10 +441,16 @@ class HoppscotchSyncPanel(private val project: Project) {
         }
 
         // ── Filter toolbar ──
+        syncedOnlyCheckbox = JCheckBox(I18n.message("filter.syncedOnly")).apply {
+            addActionListener { applyFilter() }
+        }
+
         val filterToolbar = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             border = BorderFactory.createEmptyBorder(0, 8, 8, 8)
             add(searchField)
+            add(Box.createHorizontalStrut(4))
+            add(syncedOnlyCheckbox)
             add(Box.createHorizontalStrut(4))
             add(columnsButton)
             add(Box.createHorizontalGlue())
@@ -780,6 +787,14 @@ class HoppscotchSyncPanel(private val project: Project) {
 
         rowSorter.rowFilter = object : RowFilter<TableModel, Int>() {
             override fun include(entry: Entry<out TableModel, out Int>): Boolean {
+                // "仅已同步"模式：只保留 SYNCED 行
+                if (syncedOnlyCheckbox.isSelected) {
+                    val modelRow = entry.identifier
+                    if (modelRow !in rowSyncStatus.indices || rowSyncStatus[modelRow] != SyncStatus.SYNCED) {
+                        return false
+                    }
+                }
+
                 if (searchText.isEmpty()) return true
 
                 // 目标列：路径(2)、Controller(3)、方法(4)、项目(6)
@@ -1265,8 +1280,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                         }
                     }
 
-                    table.repaint()
-                    updateStatsLabel()
+                    applyFilter()
                 }
             }
         })
@@ -1350,7 +1364,7 @@ class HoppscotchSyncPanel(private val project: Project) {
                                     rowSyncStatus[i] = status
                                 }
                             }
-                            table.repaint()
+                            applyFilter()
                         }
                         updateStatsLabel()
                         statusLabel.text = I18n.message("status.checkDone")
