@@ -11,6 +11,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBScrollPane
@@ -38,8 +39,11 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.Point
 import java.awt.RenderingHints
 import java.awt.BasicStroke
@@ -764,43 +768,73 @@ class HoppscotchSyncPanel(private val project: Project) {
     private fun showProjectPopup() {
         if (allProjects.isEmpty()) return
 
-        val popup = JPopupMenu()
-        val allItem = JMenuItem(I18n.message("project.allPopup"))
-        allItem.addActionListener {
-            selectedProjects = if (selectedProjects.size == allProjects.size)
-                emptySet()
-            else
-                allProjects.toSet()
-            updateProjectButton()
-            saveSelectedProjectsToCache()
-        }
-        popup.add(allItem)
-
-        val invertItem = JMenuItem(I18n.message("project.invert"))
-        invertItem.addActionListener {
-            val inverted = allProjects.filter { it !in selectedProjects }.toSet()
-            selectedProjects = inverted
-            updateProjectButton()
-            saveSelectedProjectsToCache()
-            popup.isVisible = false
-        }
-        popup.add(invertItem)
-        popup.addSeparator()
-
-        for (project in allProjects) {
-            val checked = project in selectedProjects
-            val cb = JCheckBox(project, checked)
-            cb.isOpaque = false
-            cb.addActionListener {
-                if (cb.isSelected) selectedProjects = selectedProjects + project
-                else selectedProjects = selectedProjects - project
-                updateProjectButton()
-                saveSelectedProjectsToCache()
+        val checkboxes = allProjects.map { project ->
+            JCheckBox(project, project in selectedProjects).apply {
+                isOpaque = false
+                addActionListener {
+                    if (isSelected) selectedProjects = selectedProjects + project
+                    else selectedProjects = selectedProjects - project
+                    updateProjectButton()
+                    saveSelectedProjectsToCache()
+                }
             }
-            popup.add(cb)
         }
 
-        popup.show(projectButton, 0, projectButton.height)
+        // ── Header: 全选 / 反选 ──
+        val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            isOpaque = false
+            add(JButton(I18n.message("project.allPopup")).apply {
+                addActionListener {
+                    val allSelected = checkboxes.all { it.isSelected }
+                    checkboxes.forEach { it.isSelected = !allSelected }
+                    selectedProjects = checkboxes.filter { it.isSelected }.map { it.text }.toSet()
+                    updateProjectButton()
+                    saveSelectedProjectsToCache()
+                }
+            })
+            add(JButton(I18n.message("project.invert")).apply {
+                addActionListener {
+                    checkboxes.forEach { it.isSelected = !it.isSelected }
+                    selectedProjects = checkboxes.filter { it.isSelected }.map { it.text }.toSet()
+                    updateProjectButton()
+                    saveSelectedProjectsToCache()
+                }
+            })
+        }
+
+        // ── Scrollable checkbox list ──
+        val listPanel = JPanel(GridBagLayout()).apply {
+            isOpaque = false
+            val gbc = GridBagConstraints().apply {
+                gridwidth = GridBagConstraints.REMAINDER
+                fill = GridBagConstraints.HORIZONTAL
+                anchor = GridBagConstraints.WEST
+                weightx = 1.0
+            }
+            checkboxes.forEach { add(it, gbc) }
+        }
+
+        val scrollPane = JScrollPane(listPanel).apply {
+            val itemHeight = 22
+            val maxVisible = 15
+            preferredSize = Dimension(360, minOf(allProjects.size * itemHeight + 4, maxVisible * itemHeight))
+            border = null
+        }
+
+        val contentPanel = JPanel(BorderLayout()).apply {
+            add(headerPanel, BorderLayout.NORTH)
+            add(scrollPane, BorderLayout.CENTER)
+        }
+
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(contentPanel, scrollPane)
+            .setMovable(false)
+            .setResizable(true)
+            .setRequestFocus(true)
+            .setCancelOnClickOutside(true)
+            .setCancelOnOtherWindowOpen(true)
+            .createPopup()
+            .showUnderneathOf(projectButton)
     }
 
     // ====================================================================

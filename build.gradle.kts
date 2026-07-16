@@ -76,6 +76,18 @@ tasks.register<JavaExec>("runScenarioTest") {
     ).filterValues { it.isNotEmpty() }
 }
 
+tasks.register<JavaExec>("verifyRequestFormat") {
+    description = "验证请求 JSON 格式是否符合 Hoppscotch Zod schema"
+    group = "verification"
+    mainClass.set("com.hoppscotch.sync.verify.VerifyRequestFormat")
+    classpath = sourceSets.test.get().runtimeClasspath
+    doFirst {
+        classpath = classpath +
+            configurations.getByName("intellijPlatformRuntimeClasspath") +
+            configurations.getByName("intellijPlatformTestClasspath")
+    }
+}
+
 intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"

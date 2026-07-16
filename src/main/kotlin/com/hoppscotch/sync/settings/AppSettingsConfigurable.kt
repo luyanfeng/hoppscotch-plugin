@@ -132,8 +132,7 @@ class AppSettingsConfigurable : Configurable {
             }
             group(I18n.message("settings.group.note")) {
                 row {
-                    cell(JBLabel(I18n.message("settings.note.dupCollection")))
-                        .comment(I18n.message("settings.note.dupCollection.comment"))
+                    comment(I18n.message("settings.note.dupCollection"))
                 }
             }
         }.also {

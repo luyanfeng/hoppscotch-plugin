@@ -211,7 +211,7 @@ object ScenarioIntegrationTest {
             println("  method=${request.method}, contentType=${request.body.contentType}")
             check(request.method == "POST") { "method 应为 POST" }
             check(request.body.contentType == "application/json") { "contentType 应为 application/json" }
-            check(request.body.body?.contains("name") == true) { "body 应包含 name 字段" }
+            check((request.body.body as? String)?.contains("name") == true) { "body 应包含 name 字段" }
             check(json.contains("\"method\": \"POST\"")) { "JSON 应包含 method: POST（pretty-print 带空格）" }
             println("  ✅ C3-2 通过")
         } catch (e: Throwable) {

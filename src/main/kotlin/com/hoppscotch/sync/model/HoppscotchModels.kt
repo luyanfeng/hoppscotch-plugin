@@ -33,7 +33,7 @@ data class HoppscotchHeader(
 
 data class HoppscotchBody(
     val contentType: String? = null,
-    val body: String? = null
+    val body: Any? = null
 )
 
 data class HoppscotchAuth(

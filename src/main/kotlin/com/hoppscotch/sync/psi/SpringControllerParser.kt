@@ -48,6 +48,12 @@ class SpringControllerParser(private val project: Project) {
     private const val ANNOTATION_API_OPERATION = "io.swagger.annotations.ApiOperation"
     private const val ANNOTATION_OPERATION_V3 = "io.swagger.v3.oas.annotations.Operation"
 
+        // MultipartFile 类型全限定名
+        private val MULTIPART_FILE_TYPES = setOf(
+            "MultipartFile",
+            "org.springframework.web.multipart.MultipartFile"
+        )
+
         // JSON 骨架展示相关常量
         private val PRIMITIVE_TYPES = setOf(
             "byte", "short", "int", "long", "float", "double", "boolean", "char"
@@ -538,7 +544,8 @@ class SpringControllerParser(private val project: Project) {
                 defaultValue = defaultValue,
                 bodyJsonSkeleton = bodyJsonSkeleton,
                 bodyJsonTemplate = bodyJsonTemplate,
-                objectFields = objectFields
+                objectFields = objectFields,
+                isMultipartFile = paramType in MULTIPART_FILE_TYPES
             )
         }
 
@@ -549,7 +556,8 @@ class SpringControllerParser(private val project: Project) {
             type = paramType,
             source = ParamSource.QUERY,
             required = true,
-            objectFields = objectFields
+            objectFields = objectFields,
+            isMultipartFile = paramType in MULTIPART_FILE_TYPES
         )
     }
 

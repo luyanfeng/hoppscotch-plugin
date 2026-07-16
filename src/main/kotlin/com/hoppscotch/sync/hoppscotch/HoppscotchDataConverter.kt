@@ -89,6 +89,34 @@ class HoppscotchDataConverter {
          * 格式： "serverId,localHash,srvHash"
          */
         fun buildSyncValue(serverId: String, localHash: Int, srvHash: Int): String = "$serverId,$localHash,$srvHash"
+
+        /**
+         * 根据参数类型名返回 HTTP 请求中合理的占位值（字符串形式）。
+         * 用于路径变量、query param 等场景。
+         */
+        @JvmStatic
+        fun placeholderValueForType(type: String): String = when {
+            type in listOf(
+                "int", "Integer", "java.lang.Integer",
+                "long", "Long", "java.lang.Long",
+                "short", "Short", "java.lang.Short",
+                "byte", "Byte", "java.lang.Byte"
+            ) -> "0"
+            type in listOf(
+                "double", "Double", "java.lang.Double",
+                "float", "Float", "java.lang.Float"
+            ) -> "0.0"
+            type in listOf("boolean", "Boolean", "java.lang.Boolean") -> "true"
+            type in listOf("java.util.UUID") -> "00000000-0000-0000-0000-000000000000"
+            type in listOf(
+                "String", "java.lang.String",
+                "char", "Character", "java.lang.Character",
+                "java.time.LocalDate", "java.time.LocalDateTime",
+                "java.time.LocalTime", "java.util.Date"
+            ) -> ""
+            type.startsWith("List<") || type.startsWith("Set<") || type.startsWith("Collection<") -> ""
+            else -> ""
+        }
     }
 
     /**
@@ -122,10 +150,15 @@ class HoppscotchDataConverter {
             val endpointParam = endpoint.parameters.find {
                 it.name == paramName && it.source == ParamSource.PATH
             }
+            val value = when {
+                endpointParam?.defaultValue != null -> endpointParam.defaultValue!!
+                endpointParam != null -> placeholderValueForType(endpointParam.type)
+                else -> paramName // 无对应参数 → 用参数名自身
+            }
             params.add(
                 HoppscotchParam(
                     key = paramName,
-                    value = endpointParam?.defaultValue ?: "",
+                    value = value,
                     active = true
                 )
             )
@@ -133,10 +166,12 @@ class HoppscotchDataConverter {
 
         // ---- 查询参数 ----
         // 当 consumes 为 form-data/urlencoded 时，@RequestParam 参数是表单字段，不放入 URL 查询串
+        // MultipartFile 无论是否有 consumes 都转入 form body
+        val isBodyMethod = endpoint.httpMethod.name in listOf("POST", "PUT", "PATCH")
         for (ep in endpoint.parameters.filter { it.source == ParamSource.QUERY }) {
             // 避免与路径变量重名
             if (ep.name !in pathParamNames) {
-                if (isFormLike) {
+                if (isFormLike || ep.isMultipartFile) {
                     formBodyParams.add(ep)
                 } else {
                     if (ep.objectFields.isNotEmpty()) {
@@ -144,11 +179,22 @@ class HoppscotchDataConverter {
                         for (field in ep.objectFields) {
                             params.add(HoppscotchParam(key = field, value = "", active = true))
                         }
+                        // POST/PUT/PATCH 中无 @RequestBody 的 POJO 也支持 form 表单传参
+                        if (isBodyMethod) {
+                            ep.objectFields.forEach { field ->
+                                formBodyParams.add(
+                                    EndpointParameter(
+                                        name = field, type = "String",
+                                        source = ParamSource.QUERY, required = false
+                                    )
+                                )
+                            }
+                        }
                     } else {
                         params.add(
                             HoppscotchParam(
                                 key = ep.name,
-                                value = ep.defaultValue ?: "",
+                                value = ep.defaultValue ?: placeholderValueForType(ep.type),
                                 active = true
                             )
                         )
@@ -179,8 +225,18 @@ class HoppscotchDataConverter {
                     active = true
                 )
             )
-        } else if (hasRequestBody) {
-            // 存在 @RequestBody 但未指定 consumes → 默认 application/json
+        } else if (formBodyParams.isNotEmpty()) {
+            // form 表单参数 → 默认 application/x-www-form-urlencoded（含 multipart file 时改为 multipart/form-data）
+            val ct = if (formBodyParams.any { it.isMultipartFile }) "multipart/form-data" else "application/x-www-form-urlencoded"
+            headers.add(
+                HoppscotchHeader(
+                    key = "Content-Type",
+                    value = ct,
+                    active = true
+                )
+            )
+        } else if (endpoint.parameters.any { it.source == ParamSource.BODY }) {
+            // @RequestBody 但未指定 consumes → 默认 application/json
             headers.add(
                 HoppscotchHeader(
                     key = "Content-Type",
@@ -192,7 +248,27 @@ class HoppscotchDataConverter {
 
         // ---- 请求体 ----
         val body = when {
-            formBodyParams.isNotEmpty() -> buildFormBody(formBodyParams, endpoint.consumes.firstOrNull())
+            formBodyParams.isNotEmpty() -> {
+                val isMultipart = formBodyParams.any { it.isMultipartFile }
+                val ct = endpoint.consumes.firstOrNull()
+                    ?: if (isMultipart) "multipart/form-data"
+                    else "application/x-www-form-urlencoded"
+                // 当 multipart 模式下同时有 @RequestBody 时，把 JSON 模板也作为 text 字段加入 body
+                if (isMultipart) {
+                    val bodyParams = endpoint.parameters.filter { it.source == ParamSource.BODY }
+                    for (bp in bodyParams) {
+                        val jsonValue = bp.bodyJsonTemplate ?: "{}"
+                        formBodyParams.add(
+                            EndpointParameter(
+                                name = bp.name, type = "String",
+                                source = ParamSource.QUERY, required = false,
+                                defaultValue = jsonValue
+                            )
+                        )
+                    }
+                }
+                buildFormBody(formBodyParams, ct)
+            }
             hasRequestBody -> buildRequestBodyTemplate(endpoint)
             else -> HoppscotchBody()
         }
@@ -275,11 +351,28 @@ class HoppscotchDataConverter {
     /**
      * 为 consumes = multipart/form-data 或 application/x-www-form-urlencoded 的端点
      * 构建 form 请求体。
+     *
+     * - urlencoded → body = "key=value&k2=v2"（字符串）
+     * - multipart   → body = List<Map>，Gson 序列化为 JSON 数组
+     *                 `[{key, value, type}]` 格式，符合 Hoppscotch Zod schema
      */
-    private fun buildFormBody(formParams: List<EndpointParameter>, contentType: String?): HoppscotchBody {
-        val body = formParams.joinToString("&") { ep ->
-            val value = ep.defaultValue?.takeIf { it.isNotBlank() } ?: ""
-            "${ep.name}=$value"
+    private fun buildFormBody(formParams: List<EndpointParameter>, contentType: String): HoppscotchBody {
+        val body: Any = if (contentType == "multipart/form-data") {
+            // Hoppscotch 的 multipart body 是 FormDataKeyValue 数组
+            formParams.map { ep ->
+                val value = ep.defaultValue?.takeIf { it.isNotBlank() } ?: ""
+                val type = if (ep.isMultipartFile) "file" else "text"
+                mapOf(
+                    "key" to ep.name,
+                    "value" to value,
+                    "type" to type
+                )
+            }
+        } else {
+            formParams.joinToString("&") { ep ->
+                val value = ep.defaultValue?.takeIf { it.isNotBlank() } ?: ""
+                "${ep.name}=$value"
+            }
         }
         return HoppscotchBody(contentType = contentType, body = body)
     }

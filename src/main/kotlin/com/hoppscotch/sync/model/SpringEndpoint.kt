@@ -26,7 +26,8 @@ data class EndpointParameter(
     val description: String? = null,
     val bodyJsonSkeleton: String? = null, // @RequestBody 类型递归解析后的 JSON 骨架展示字符串，如 {"name":"...","age":...}
     val bodyJsonTemplate: String? = null, // @RequestBody 同步用的 JSON 模板（真实占位值），如 {"name":"string","age":0}
-    val objectFields: List<String> = emptyList() // 复杂对象（非 @RequestBody）展开的字段名，用于 query 参数展示
+    val objectFields: List<String> = emptyList(), // 复杂对象（非 @RequestBody）展开的字段名，用于 query 参数展示
+    val isMultipartFile: Boolean = false // 参数类型是否为 MultipartFile
 )
 
 /**
