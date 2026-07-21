@@ -115,7 +115,3 @@ gradle verifyPlugin                # 验证兼容性
 ## 许可
 
 Apache 2.0
-
-## 友情链接
-
-[Linux DO](https://linux.do/) — 温暖、包容的 Linux 与开发者社区
