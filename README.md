@@ -25,7 +25,7 @@
 
 ## 系统要求
 
-- IntelliJ IDEA 2026.1+ (Build 261+)
+- IntelliJ IDEA 2025.1+ (Build 251+)
 - JDK 21
 - Hoppscotch Self-Hosted 实例
 

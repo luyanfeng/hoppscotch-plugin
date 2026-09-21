@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.hoppscotch.sync"
-            version = "1.3.5"
+            version = "1.3.6"
 
 repositories {
     mavenCentral()
@@ -92,11 +92,12 @@ intellijPlatform {
     pluginConfiguration {
         id = "com.hoppscotch.sync"
             name = "Hoppscotch Sync"
-            version = "1.3.5"
+            version = "1.3.6"
         description = """
             <h3>English</h3>
             <p>Sync Spring Boot REST API endpoints to Hoppscotch self-hosted instance.</p>
             <p><b>⚠️ Spring Boot (Java) only.</b></p>
+            <p><b>⚠️ Personal workspace only.</b> Syncs to your Hoppscotch personal workspace; team/shared workspaces are not supported.</p>
             <p>Features:</p>
             <ul>
                 <li>Parse @RestController and @Controller classes in your project</li>
@@ -115,6 +116,7 @@ intellijPlatform {
             <h3>中文</h3>
             <p>将 Spring Boot REST API 端点同步到 Hoppscotch 自托管实例。</p>
             <p><b>⚠️ 仅支持 Spring Boot (Java) 项目。</b></p>
+            <p><b>⚠️ 仅支持个人工作空间。</b>插件同步到 Hoppscotch 个人工作空间；不支持团队工作空间同步。</p>
             <p>功能：</p>
             <ul>
                 <li>扫描 @RestController / @Controller 类，提取所有 HTTP 端点</li>
@@ -131,7 +133,8 @@ intellijPlatform {
         """.trimIndent()
             changeNotes = """
             <ul>
-                <li><b>1.3.5</b> 新增: 搜索框后"仅已同步"过滤勾选框；状态栏悬停提示复制快捷键；精简 AGENTS.md</li>
+                <li><b>1.3.6</b> 兼容 IntelliJ IDEA 2025.1+（Build 251–262.*，含 2025.1/2025.2/2026.1），已通过 Plugin Verifier 兼容性验证；⚠️ 仅支持同步到 Hoppscotch 个人工作空间，不支持团队工作空间</li>
+            <li><b>1.3.5</b> 新增: 搜索框后"仅已同步"过滤勾选框；状态栏悬停提示复制快捷键；精简 AGENTS.md</li>
                 <li><b>1.3.4</b> Fix: 移除依赖 orderIndex（GraphQL 不暴露该字段），改用 title 确定性匹配以避免集合/请求重复创建；新增 25 项场景化集成测试覆盖 6 个模块（连接/版本/数据转换/同步编排/状态检测/持久化）</li>
                 <li><b>1.3.0</b> 新增: 服务端版本检测；请求 JSON 前置 Zod 校验；请求 Schema 升级至 v17；修复 body 序列化兼容性</li>
                 <li><b>1.2.4</b> Fix: 请求 body 序列化时 Gson 排除 null 字段导致 web 端 Zod 校验失败显示 Untitled</li>
@@ -144,7 +147,7 @@ intellijPlatform {
             </ul>
         """.trimIndent()
         ideaVersion {
-            sinceBuild = "261"
+            sinceBuild = "251"
             untilBuild = "262.*"
         }
         vendor {
@@ -155,6 +158,7 @@ intellijPlatform {
     pluginVerification {
         ides {
             ide(IntelliJPlatformType.IntellijIdeaUltimate, "2026.1")
+            ide(IntelliJPlatformType.IntellijIdeaUltimate, "2025.1")
         }
     }
 
